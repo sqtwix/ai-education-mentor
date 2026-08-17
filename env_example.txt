@@ -1,0 +1,17 @@
+# НАСТРОЙКИ POSTGRESQL
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=aichecker
+DB_USER=aichecker_user
+DB_PASSWORD=aichecker_password
+
+# НАСТРОЙКИ JWT 
+JWT_SECRET=SUPER_SECRET_KEY_MUST_BE_VERY_LONG_MIN_32_CHARS_123456
+JWT_ISSUER=AiCheckerApiCore
+JWT_AUDIENCE=AiCheckerFrontend
+JWT_EXPIRY_MINUTES=1440
+
+# КЛЮЧИ ИИ МОДЕЛЕЙ (ОПЦИОНАЛЬНО)
+DEEPSEEK_API_KEY=
+SBERGPT_API_KEY=
+VITE_OFFLINE_MODE=true
