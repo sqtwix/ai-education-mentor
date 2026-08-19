@@ -15,9 +15,11 @@ import {
   unarchiveAnalysisReport,
 } from "./api";
 import { AppLayout } from "./components/Layout";
-import { AccessibilityToolbar } from "./components/AccessibilityToolbar";
 import { ConfirmDialog, NamingDialog, ToastStack } from "./components/Feedback";
 import { AuthPage, SettingsPage, StudentsPage, CourseReportDetailPage } from "./components/Pages";
+import { TrajectoryConstructor } from "./components/TrajectoryConstructor";
+import { CatalogExplorer } from "./components/CatalogExplorer";
+import { ColleagueAnalytics } from "./components/ColleagueAnalytics";
 import { loadUserSettings, persistUserSettings, readLocalSettings } from "./settingsService";
 import { getSidebarMaxWidth, layoutLimits, readLayoutPreferences, writeLayoutPreferences } from "./layoutPreferences";
 import {
@@ -1092,165 +1094,36 @@ function App() {
   };
 
   const renderActivePage = () => {
-    if (route === "upload") {
+    if (route === "catalog") {
       return (
-        <section className="page active" id="upload" data-title="Загрузка данных">
-          {!isAnalyzing ? (
-            <div className="split upload-layout" id="upload-form-panel">
-              <section className="panel">
-                <p className="eyebrow">Новый анализ</p>
-                <h2>Загрузите файлы опросов слушателей</h2>
-                <p className="muted">Поддерживаются файлы Excel (.xlsx), CSV или ZIP-архивы с таблицами опросов. Если в файлах не хватает колонок или они повреждены, система сообщит об этом до запуска анализа.</p>
+        <section className="page active" id="catalog" data-title="Каталог программ 2025">
+          <CatalogExplorer />
+        </section>
+      );
+    }
 
-                <div
-                  className="dropzone"
-                  id="responses-dropzone"
-                  style={{ cursor: "pointer" }}
-                  onClick={() => responsesInputRef.current.click()}
-                >
-                  <span><Files size={30} strokeWidth={2.2} /></span>
-                  <strong id="responses-file-name">
-                    {selectedResponseFiles.length === 0
-                      ? "Выберите файлы анкет"
-                      : selectedResponseFiles.length === 1
-                      ? selectedResponseFiles[0].name
-                      : `Выбрано файлов: ${selectedResponseFiles.length}`}
-                  </strong>
-                  <p>Нажмите для выбора файлов анкет (.csv, .xlsx) или ZIP-архива</p>
-                  <input
-                    type="file"
-                    id="responses-input"
-                    ref={responsesInputRef}
-                    style={{ display: "none" }}
-                    multiple
-                    accept=".csv,.xlsx,.zip"
-                    onChange={(e) => handleFileChange(e, "responses")}
-                  />
-                </div>
-              </section>
+    if (route === "analytics" || route === "benchmarks") {
+      return (
+        <section className="page active" id="analytics" data-title="Бенчмарк должностей">
+          <ColleagueAnalytics />
+        </section>
+      );
+    }
 
-              <section className="panel">
-                <p className="eyebrow">Параметры</p>
-                <h3>Выбор ИИ-модели</h3>
-                <label className="field-label">ИИ-модель</label>
-                <div className="segmented" id="model-selector-container">
-                  <button
-                    type="button"
-                    style={{ textDecoration: "line-through", textDecorationColor: "#dc2626", textDecorationThickness: "2px", color: "var(--text-muted)", opacity: 0.75 }}
-                    onClick={() => {
-                      notify({
-                        type: "info",
-                        title: "Информация",
-                        message: "Данные модели в разработке",
-                      });
-                    }}
-                    title="Данные модели в разработке"
-                  >
-                    DeepSeek
-                  </button>
-                  <button
-                    type="button"
-                    style={{ textDecoration: "line-through", textDecorationColor: "#dc2626", textDecorationThickness: "2px", color: "var(--text-muted)", opacity: 0.75 }}
-                    onClick={() => {
-                      notify({
-                        type: "info",
-                        title: "Информация",
-                        message: "Данные модели в разработке",
-                      });
-                    }}
-                    title="Данные модели в разработке"
-                  >
-                    GigaChat
-                  </button>
-                  <button
-                    type="button"
-                    className={selectedModel === "Qwen_Local" ? "selected" : ""}
-                    onClick={() => setSelectedModel("Qwen_Local")}
-                  >
-                    Qwen Local
-                  </button>
-                </div>
-
-                {showValidation && (
-                  <div
-                    className={`validation-box validation-box-${uploadValidation.status}`}
-                    id="upload-validation-box"
-                    style={{ marginTop: "20px" }}
-                  >
-                    <b>{uploadValidation.title}</b>
-                    <p>{uploadValidation.message}</p>
-                  </div>
-                )}
-
-                <button
-                  className="primary-button wide"
-                  id="start-analysis-btn"
-                  style={{ marginTop: "20px", width: "100%" }}
-                  onClick={startAnalysis}
-                  disabled={uploadValidation.status === "error"}
-                >
-                  Запустить анализ
-                </button>
-
-                {isOfflineMode && (
-                  <form className="offline-create-form" onSubmit={handleCreateManualReport}>
-                    <p className="eyebrow">Offline песочница</p>
-                    <h3>Создать отчет вручную</h3>
-                    <label>
-                      Название курса
-                      <input
-                        type="text"
-                        value={manualCourse}
-                        onChange={(e) => setManualCourse(e.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Заголовок отчета
-                      <textarea
-                        rows="3"
-                        value={manualTitle}
-                        onChange={(e) => setManualTitle(e.target.value)}
-                      />
-                    </label>
-                    <button type="submit" className="secondary-button wide">
-                      Создать черновик
-                    </button>
-                  </form>
-                )}
-              </section>
-            </div>
-          ) : (
-            <div className="panel" id="upload-progress-panel" style={{ marginTop: "0" }}>
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow" id="progress-task-id">Задача {analysisTaskId}</p>
-                  <h2>Выполнение анализа</h2>
-                </div>
-                <span className="badge" id="progress-percentage-badge">{analysisProgress}%</span>
-              </div>
-              <div className="progress-track">
-                <span id="progress-fill-bar" style={{ width: `${analysisProgress}%`, transition: "width 0.4s ease" }}></span>
-              </div>
-              <div className="timeline" id="progress-timeline-steps">
-                <div id="step-1" className={getTimelineStepClass(0, analysisProgress)}>
-                  <b>Файлы приняты</b>
-                  <p>Эталон и файлы ответов прошли базовую проверку.</p>
-                </div>
-                <div id="step-2" className={getTimelineStepClass(1, analysisProgress)}>
-                  <b>Данные приведены к JSON</b>
-                  <p>{isOfflineMode ? "Offline mode подготовил локальную структуру отчета." : "api-core подготовил структуру для ai-driver."}</p>
-                </div>
-                <div id="step-3" className={getTimelineStepClass(2, analysisProgress)}>
-                  <b>ИИ-агенты анализируют паттерны</b>
-                  <p>{isOfflineMode ? "Создается шаблонный демо-результат для проверки интерфейса." : "Статистик проверяет время, методист ищет типовые ошибки."}</p>
-                </div>
-                <div id="step-4" className={getTimelineStepClass(3, analysisProgress)}>
-                  <b>Формируется отчёт</b>
-                  <p>{isOfflineMode ? "JSON будет доступен локально после завершения." : "Excel, JSON и PDF будут готовы после завершения."}</p>
-                </div>
-              </div>
-            </div>
-          )}
+    if (route === "upload" || route === "constructor" || route === "") {
+      return (
+        <section className="page active" id="constructor" data-title="Конструктор ИОТ">
+          <TrajectoryConstructor
+            onTrajectoryCreated={(taskId) => {
+              notify({
+                type: "success",
+                title: "Траектория сформирована",
+                message: "ИИ-агенты успешно составили индивидуальную траекторию обучения.",
+              });
+              fetchHistory();
+              window.location.hash = `report-detail-${taskId}`;
+            }}
+          />
         </section>
       );
     }

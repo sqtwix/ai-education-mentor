@@ -1,4 +1,7 @@
-import { Archive, FileText, LogOutIcon, Menu, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings, User, Users } from "lucide-react";
+import { 
+  Archive, FileText, LogOutIcon, Menu, PanelLeftClose, PanelLeftOpen, 
+  Plus, Search, Settings, User, Users, BookOpen, BarChart3, Sparkles 
+} from "lucide-react";
 import logo from "../assets/logo.png";
 
 export function AppLayout({
@@ -34,30 +37,39 @@ export function AppLayout({
       data-density={settings?.minimalUi ? "minimal" : "comfortable"}
     >
       <aside className="sidebar" aria-label="Основная навигация">
-        <a className="brand" href="#upload" aria-label="Анализ отзывов студентов">
-          <img className="brand-logo" src={logo} alt="Анализ отзывов студентов" />
+        <a className="brand" href="#constructor" aria-label="ИИ-агент индивидуальной траектории обучения">
+          <img className="brand-logo" src={logo} alt="ИИ-агент ИОТ" />
           <span>
-            <strong>Анализ отзывов студентов</strong>
-            <small>анализ ответов</small>
+            <strong>ИИ-агент ИОТ</strong>
+            <small>Корпоративный университет СПб</small>
           </span>
         </a>
 
-        <a href="#upload" className={`new-chat-btn ${route === "upload" ? "active" : ""}`} onClick={onNewAnalysis}>
-          <Plus size={18} strokeWidth={2.2} /> Новый анализ
+        <a href="#constructor" className={`new-chat-btn ${route === "constructor" || route === "upload" ? "active" : ""}`} onClick={onNewAnalysis}>
+          <Plus size={18} strokeWidth={2.2} /> Сформировать ИОТ
         </a>
+
+        <nav className="nav sidebar-nav-top">
+          <a href="#catalog" className={`secondary-nav-link ${route === "catalog" ? "active" : ""}`}>
+            <BookOpen size={17} strokeWidth={2.2} /> Каталог программ 2025
+          </a>
+          <a href="#analytics" className={`secondary-nav-link ${route === "analytics" ? "active" : ""}`}>
+            <BarChart3 size={17} strokeWidth={2.2} /> Бенчмарк должностей
+          </a>
+        </nav>
 
         <div className="sidebar-divider"></div>
 
         <div className="sidebar-history-section">
-          <div className="sidebar-section-title">История анализов</div>
+          <div className="sidebar-section-title">Сохраненные траектории</div>
           <label className="sidebar-search">
             <Search size={16} strokeWidth={2.2} />
             <input
               type="search"
               value={historyQuery}
               onChange={(e) => onHistoryQueryChange(e.target.value)}
-              placeholder="Найти отчет"
-              aria-label="Найти отчет в истории"
+              placeholder="Поиск по траекториям..."
+              aria-label="Найти траекторию в истории"
             />
           </label>
 
@@ -97,19 +109,12 @@ export function AppLayout({
               ))
             ) : (
               <div className="sidebar-empty">
-                {historyQuery ? "Ничего не найдено" : "История пока пуста"}
+                {historyQuery ? "Ничего не найдено" : "История траекторий пуста"}
               </div>
             )}
           </div>
         </div>
 
-        <div className="sidebar-divider"></div>
-
-        <nav className="nav sidebar-nav">
-          <a href="#students" className={`secondary-nav-link ${route === "students" ? "active" : ""}`}>
-            <Users size={17} strokeWidth={2.2} /> Студенты
-          </a>
-        </nav>
         <button
           type="button"
           className="sidebar-resize-handle"

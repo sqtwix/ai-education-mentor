@@ -3,9 +3,9 @@ using ApiCore.Models;
 using ApiCore.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace ApiCore.Controllers;
-
 
 [ApiController]
 [Route("api/v1/analysis")]
@@ -15,51 +15,39 @@ public class AnalysisController : ControllerBase
     private readonly AppDbContext _context;
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ReportsService _reportsService;
+    private readonly FileParser _fileParser;
 
-    public AnalysisController(AnalysisService analysisService, AppDbContext context, IServiceScopeFactory serviceScopeFactory, ReportsService reportsService)
+    public AnalysisController(
+        AnalysisService analysisService, 
+        AppDbContext context, 
+        IServiceScopeFactory serviceScopeFactory, 
+        ReportsService reportsService,
+        FileParser fileParser)
     {
         _analysisService = analysisService;
         _context = context;
         _serviceScopeFactory = serviceScopeFactory;
         _reportsService = reportsService;
+        _fileParser = fileParser;
     }
 
-    [HttpPost("upload")]
-    [DisableRequestSizeLimit] // Чтобы методисты могли загружать тяжелые CSV/архивы
-    public async Task<IActionResult> UploadFiles(
-        [FromForm] List<IFormFile> userResponseFiles,    // Массив файлов с реальными отзывами/анкетами
-        [FromForm] string modelType = "deepseek")     // Выбор нейросети (deepseek или gigachat)
+    [HttpPost("generate-trajectory")]
+    public async Task<IActionResult> GenerateTrajectory([FromBody] TrajectoryGenerateRequest request)
     {
-        // 1. Быстрая валидация (Критерий ТЗ: Обработка ошибок)
-        if (userResponseFiles == null || !userResponseFiles.Any())
-            return BadRequest(new { error = "Необходимо загрузить хотя бы один файл с отзывами пользователей." });
-
         var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
         {
             return Unauthorized(new { error = "Пользователь не авторизован." });
         }
 
-        // 2. Генерируем уникальный ID для этой задачи анализа
-        var taskId = Guid.NewGuid().ToString();
-
-        // Создаем временную папку для сохранения файлов в пределах запроса
-        var tempDir = Path.Combine(Directory.GetCurrentDirectory(), "temp_uploads", taskId);
-        Directory.CreateDirectory(tempDir);
-
-        var userResponsePaths = new List<string>();
-        foreach (var file in userResponseFiles)
+        if (request.Employee == null || string.IsNullOrWhiteSpace(request.Employee.Position))
         {
-            var path = Path.Combine(tempDir, file.FileName);
-            using (var stream = new FileStream(path, FileMode.Create))
-            {
-                await file.CopyToAsync(stream);
-            }
-            userResponsePaths.Add(path);
+            return BadRequest(new { error = "Необходимо указать должность государственного служащего." });
         }
 
-        // Сохраняем информацию об отчете в базу данных
-        var courseName = FileParser.ExtractCourseName(userResponseFiles[0].FileName);
+        var taskId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString() : request.RequestId;
+        var courseName = $"ИОТ: {request.Employee.Fio} ({request.Employee.Position})";
+
         var report = new AnalysisReport
         {
             Id = taskId,
@@ -71,21 +59,100 @@ public class AnalysisController : ControllerBase
         _context.AnalysisReports.Add(report);
         await _context.SaveChangesAsync();
 
-        // 3. Отдаем парсинг и отправку в фоновый сервис БЕЗ await, чтобы не блокировать фронтенд
-        // Используем IServiceScopeFactory, чтобы scoped-зависимости (такие как AppDbContext) не уничтожались при завершении HTTP-запроса
         _ = Task.Run(async () =>
         {
             using var scope = _serviceScopeFactory.CreateScope();
             var scopedService = scope.ServiceProvider.GetRequiredService<AnalysisService>();
-            await scopedService.ProcessAnalysisAsync(taskId, userId, userResponsePaths, modelType, tempDir);
+            await scopedService.ProcessTrajectoryAsync(taskId, userId, request.Employee, request.ModelType);
         });
 
-        // Возвращаем фронту ID задачи. Фронт начнет слушать WebSocket/SignalR с этим ID
         return Accepted(new
         {
             task_id = taskId,
-            message = "Файлы опросов успешно прошли первичную валидацию и приняты в обработку ИИ-агентами."
+            message = "Запрос на формирование индивидуальной траектории обучения успешно принят в обработку группой ИИ-агентов."
         });
+    }
+
+    [HttpPost("upload")]
+    [DisableRequestSizeLimit]
+    public async Task<IActionResult> UploadFiles(
+        [FromForm] List<IFormFile> userResponseFiles,
+        [FromForm] string modelType = "deepseek")
+    {
+        if (userResponseFiles == null || !userResponseFiles.Any())
+            return BadRequest(new { error = "Необходимо загрузить хотя бы один файл (.xlsx, .csv или .zip)." });
+
+        var userIdClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized(new { error = "Пользователь не авторизован." });
+        }
+
+        var taskId = Guid.NewGuid().ToString();
+        var tempDir = Path.Combine(Directory.GetCurrentDirectory(), "temp_uploads", taskId);
+        Directory.CreateDirectory(tempDir);
+
+        var filePaths = new List<string>();
+        foreach (var file in userResponseFiles)
+        {
+            var path = Path.Combine(tempDir, file.FileName);
+            using (var stream = new FileStream(path, FileMode.Create))
+            {
+                await file.CopyToAsync(stream);
+            }
+            filePaths.Add(path);
+        }
+
+        var courseName = FileParser.ExtractCourseName(userResponseFiles[0].FileName);
+        var report = new AnalysisReport
+        {
+            Id = taskId,
+            UserId = userId,
+            CourseName = $"ИОТ из файла: {courseName}",
+            Status = "Processing",
+            CreatedAt = DateTime.UtcNow
+        };
+        _context.AnalysisReports.Add(report);
+        await _context.SaveChangesAsync();
+
+        _ = Task.Run(async () =>
+        {
+            using var scope = _serviceScopeFactory.CreateScope();
+            var scopedService = scope.ServiceProvider.GetRequiredService<AnalysisService>();
+            await scopedService.ProcessAnalysisAsync(taskId, userId, filePaths, modelType, tempDir);
+        });
+
+        return Accepted(new
+        {
+            task_id = taskId,
+            message = "Файлы успешно загружены и переданы на анализ группе ИИ-агентов."
+        });
+    }
+
+    [HttpGet("catalog")]
+    public IActionResult GetCatalog()
+    {
+        var catalog = _fileParser.GetDefaultCatalog();
+        return Ok(catalog);
+    }
+
+    [HttpGet("users")]
+    public IActionResult GetUsers()
+    {
+        var users = _fileParser.GetDefaultUsersHistory();
+        return Ok(users);
+    }
+
+    [HttpGet("benchmarks")]
+    public IActionResult GetBenchmarks()
+    {
+        var dataPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "learning_history_dataset.json");
+        if (System.IO.File.Exists(dataPath))
+        {
+            var json = System.IO.File.ReadAllText(dataPath, System.Text.Encoding.UTF8);
+            return Content(json, "application/json");
+        }
+        return Ok(new { benchmarks_by_position = new Dictionary<string, object>() });
     }
 
     [HttpGet("status/{taskId}")]
@@ -105,9 +172,9 @@ public class AnalysisController : ControllerBase
             CourseBatchAnalysisResult? result = null;
             if (!string.IsNullOrEmpty(report.ResultJson))
             {
-                result = System.Text.Json.JsonSerializer.Deserialize<CourseBatchAnalysisResult>(
+                result = JsonSerializer.Deserialize<CourseBatchAnalysisResult>(
                     report.ResultJson, 
-                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
                 );
             }
 
@@ -119,7 +186,6 @@ public class AnalysisController : ControllerBase
             });
         }
 
-        // Резервный поиск во временном in-memory кэше
         if (AnalysisService.TaskTracker.TryGetValue(taskId, out var task))
         {
             return Ok(new

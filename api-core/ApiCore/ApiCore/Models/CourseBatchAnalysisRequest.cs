@@ -2,10 +2,89 @@ using System.Text.Json.Serialization;
 
 namespace ApiCore.Models;
 
+public class TrajectoryGenerateRequest
+{
+    [JsonPropertyName("request_id")]
+    public string RequestId { get; set; } = Guid.NewGuid().ToString();
+
+    [JsonPropertyName("employee")]
+    public EmployeeProfileDto Employee { get; set; } = new();
+
+    [JsonPropertyName("model_type")]
+    public string ModelType { get; set; } = "deepseek";
+}
+
+public class EmployeeProfileDto
+{
+    [JsonPropertyName("fio")]
+    public string Fio { get; set; } = "Государственный служащий";
+
+    [JsonPropertyName("position")]
+    public string Position { get; set; } = "Главный специалист";
+
+    [JsonPropertyName("department")]
+    public string Department { get; set; } = "Администрация Губернатора Санкт-Петербурга";
+
+    [JsonPropertyName("experience_years")]
+    public int ExperienceYears { get; set; } = 3;
+
+    [JsonPropertyName("career_goal")]
+    public string CareerGoal { get; set; } = "Развитие управленческих и цифровых компетенций";
+
+    [JsonPropertyName("learning_history")]
+    public List<CourseHistoryItemDto> LearningHistory { get; set; } = new();
+}
+
+public class CourseHistoryItemDto
+{
+    [JsonPropertyName("course_name")]
+    public string CourseName { get; set; } = string.Empty;
+
+    [JsonPropertyName("course_type")]
+    public string CourseType { get; set; } = "ППК";
+
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "Пройден";
+}
+
+public class CourseCatalogItemDto
+{
+    [JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "ППК";
+
+    [JsonPropertyName("category")]
+    public string Category { get; set; } = string.Empty;
+
+    [JsonPropertyName("annotation")]
+    public string Annotation { get; set; } = string.Empty;
+
+    [JsonPropertyName("target")]
+    public string Target { get; set; } = string.Empty;
+
+    [JsonPropertyName("results")]
+    public string Results { get; set; } = string.Empty;
+
+    [JsonPropertyName("duration_hours")]
+    public int DurationHours { get; set; } = 16;
+
+    [JsonPropertyName("competencies")]
+    public List<string> Competencies { get; set; } = new();
+}
+
+// Совместимость с предыдущим форматом пакетов
 public class CourseBatchAnalysisRequest
 {
     [JsonPropertyName("batch_id")]
     public string BatchId { get; set; } = string.Empty;
+
+    [JsonPropertyName("employee")]
+    public EmployeeProfileDto? Employee { get; set; }
 
     [JsonPropertyName("courses")]
     public List<CourseSurveyDto> Courses { get; set; } = new();

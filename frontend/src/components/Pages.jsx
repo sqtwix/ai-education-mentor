@@ -8,6 +8,7 @@ import { buildCourseReportViewModel } from "../reportViewModel";
 import { AnalyticalReportTab } from "./report/AnalyticalReportTab";
 import { DashboardTab } from "./report/DashboardTab";
 import { QualitativeTab } from "./report/QualitativeTab";
+import { TrajectoryRoadmap } from "./TrajectoryRoadmap";
 
 // ========================= Auth Page Component =========================
 export function AuthPage({
@@ -708,44 +709,58 @@ export function CourseReportDetailPage({
         </div>
       </div>
 
-      {/* Main Tabs Navigation */}
-      <nav className="report-tabs" aria-label="Разделы отчета">
-        {[
-          { key: "dashboard", label: "Панель показателей", icon: BarChart3 },
-          { key: "qualitative", label: "Качественный анализ отзывов", icon: MessageSquare },
-          { key: "report", label: "Аналитическая справка", icon: BookOpen }
-        ].map((t) => {
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.key}
-              type="button"
-              className={`tab-btn ${activeTab === t.key ? "active" : ""}`}
-              onClick={() => setActiveTab(t.key)}
-              title={t.label}
-            >
-              <Icon size={16} />
-              <span className="tab-label">{t.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+      {/* If the report contains an Individual Learning Trajectory, render the interactive TrajectoryRoadmap view */}
+      {Boolean(report.result?.trajectory || report.result?.stages || (report.result?.courses_analysis?.[0]?.stages)) ? (
+        <div style={{ marginTop: "1rem" }}>
+          <TrajectoryRoadmap
+            trajectory={report.result?.trajectory || report.result?.courses_analysis?.[0] || report.result}
+            onExportPdf={() => handleExportReport(report, "pdf")}
+            onExportXlsx={() => handleExportReport(report, "xlsx")}
+            onExportJson={() => handleExportReport(report, "json")}
+          />
+        </div>
+      ) : (
+        <>
+          {/* Main Tabs Navigation */}
+          <nav className="report-tabs" aria-label="Разделы отчета">
+            {[
+              { key: "dashboard", label: "Панель показателей", icon: BarChart3 },
+              { key: "qualitative", label: "Качественный анализ отзывов", icon: MessageSquare },
+              { key: "report", label: "Аналитическая справка", icon: BookOpen }
+            ].map((t) => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  className={`tab-btn ${activeTab === t.key ? "active" : ""}`}
+                  onClick={() => setActiveTab(t.key)}
+                  title={t.label}
+                >
+                  <Icon size={16} />
+                  <span className="tab-label">{t.label}</span>
+                </button>
+              );
+            })}
+          </nav>
 
-      {/* Tab 1: Dashboard Panel */}
-      {activeTab === "dashboard" && <DashboardTab viewModel={reportViewModel} />}
+          {/* Tab 1: Dashboard Panel */}
+          {activeTab === "dashboard" && <DashboardTab viewModel={reportViewModel} />}
 
-      {/* Tab 2: Qualitative Insights */}
-      {activeTab === "qualitative" && (
-        <QualitativeTab
-          textAnalysis={textAnalysis}
-          activeTab={qualActiveTab}
-          onTabChange={setQualActiveTab}
-          sourceLimitation={reportViewModel.limitations.sourceEvidence}
-        />
+          {/* Tab 2: Qualitative Insights */}
+          {activeTab === "qualitative" && (
+            <QualitativeTab
+              textAnalysis={textAnalysis}
+              activeTab={qualActiveTab}
+              onTabChange={setQualActiveTab}
+              sourceLimitation={reportViewModel.limitations.sourceEvidence}
+            />
+          )}
+
+          {/* Tab 3: Analytical Document View */}
+          {activeTab === "report" && <AnalyticalReportTab reportData={reportData} />}
+        </>
       )}
-
-      {/* Tab 3: Analytical Document View */}
-      {activeTab === "report" && <AnalyticalReportTab reportData={reportData} />}
     </section>
   );
 }
