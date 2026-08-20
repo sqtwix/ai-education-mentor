@@ -277,6 +277,10 @@ export function exportReportToJson(report) {
   const traj = report.result?.trajectory || report.result || {};
   const empName = traj.employee_name || "Служащий";
   const jsonStr = JSON.stringify(report.result || report, null, 2);
+  const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
   a.download = safeFileName(`ИОТ_${empName}`, "json");
   a.click();
   URL.revokeObjectURL(url);

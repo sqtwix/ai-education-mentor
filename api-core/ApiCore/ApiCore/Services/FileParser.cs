@@ -3,6 +3,7 @@ using System.Text;
 using ExcelDataReader;
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using System.IO.Compression;
 
 namespace ApiCore.Services;
 
@@ -37,19 +38,107 @@ public class FileParser
     public List<EmployeeProfileDto> ParseHistoryFiles(List<string> filePaths)
     {
         var usersMap = new Dictionary<string, EmployeeProfileDto>();
+        var flattenedPaths = new List<string>();
 
+        // Распаковываем ZIP-архивы, если есть
         foreach (var path in filePaths)
         {
             var ext = Path.GetExtension(path).ToLowerInvariant();
-            List<List<string>> rows;
+            if (ext == ".zip")
+            {
+                try
+                {
+                    var extractDir = Path.Combine(Path.GetDirectoryName(path)!, "unzipped_" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(extractDir);
+                    ZipFile.ExtractToDirectory(path, extractDir);
+                    flattenedPaths.AddRange(Directory.GetFiles(extractDir, "*.*", SearchOption.AllDirectories));
+                }
+                catch
+                {
+                    // ignore and proceed
+                }
+            }
+            else
+            {
+                flattenedPaths.Add(path);
+            }
+        }
 
+        foreach (var path in flattenedPaths)
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+
+            // 1. JSON файлы
+            if (ext == ".json")
+            {
+                try
+                {
+                    var json = File.ReadAllText(path, Encoding.UTF8);
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    if (root.ValueKind == JsonValueKind.Array)
+                    {
+                        var profiles = JsonSerializer.Deserialize<List<EmployeeProfileDto>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (profiles != null)
+                        {
+                            foreach (var p in profiles)
+                            {
+                                if (!string.IsNullOrWhiteSpace(p.Fio)) usersMap[p.Fio] = p;
+                            }
+                        }
+                    }
+                    else if (root.ValueKind == JsonValueKind.Object)
+                    {
+                        if (root.TryGetProperty("users", out var usersProp))
+                        {
+                            var profiles = JsonSerializer.Deserialize<List<EmployeeProfileDto>>(usersProp.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (profiles != null)
+                            {
+                                foreach (var p in profiles)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(p.Fio)) usersMap[p.Fio] = p;
+                                }
+                            }
+                        }
+                        else if (root.TryGetProperty("employee", out var empProp))
+                        {
+                            var profile = JsonSerializer.Deserialize<EmployeeProfileDto>(empProp.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (profile != null && !string.IsNullOrWhiteSpace(profile.Fio))
+                            {
+                                usersMap[profile.Fio] = profile;
+                            }
+                        }
+                        else
+                        {
+                            var profile = JsonSerializer.Deserialize<EmployeeProfileDto>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                            if (profile != null && !string.IsNullOrWhiteSpace(profile.Fio))
+                            {
+                                usersMap[profile.Fio] = profile;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Proceed to next file
+                }
+                continue;
+            }
+
+            // 2. Таблицы Excel и CSV
+            List<List<string>> rows;
             if (ext == ".xlsx" || ext == ".xls")
             {
                 rows = ReadExcelRows(path);
             }
-            else
+            else if (ext == ".csv")
             {
                 rows = ReadCsvRows(path);
+            }
+            else
+            {
+                continue;
             }
 
             if (rows.Count < 2) continue;
@@ -64,7 +153,6 @@ public class FileParser
 
             if (courseIdx == -1 && headers.Count >= 5)
             {
-                // Позиционная привязка по умолчанию для выгрузки ГГС: 0:ФИО, 1:Должность, 2:ИОГВ, 3:Тип, 4:Курс, 5:Статус
                 fioIdx = 0;
                 posIdx = 1;
                 iogvIdx = 2;
@@ -127,15 +215,33 @@ public class FileParser
         foreach (var path in filePaths)
         {
             var ext = Path.GetExtension(path).ToLowerInvariant();
-            List<List<string>> rows;
+            if (ext == ".json")
+            {
+                try
+                {
+                    var json = File.ReadAllText(path, Encoding.UTF8);
+                    var items = JsonSerializer.Deserialize<List<CourseCatalogItemDto>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (items != null) catalog.AddRange(items);
+                }
+                catch
+                {
+                    // ignore
+                }
+                continue;
+            }
 
+            List<List<string>> rows;
             if (ext == ".xlsx" || ext == ".xls")
             {
                 rows = ReadExcelRows(path);
             }
-            else
+            else if (ext == ".csv")
             {
                 rows = ReadCsvRows(path);
+            }
+            else
+            {
+                continue;
             }
 
             if (rows.Count < 2) continue;
@@ -199,129 +305,89 @@ public class FileParser
         var dataPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "learning_history_dataset.json");
         if (File.Exists(dataPath))
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(dataPath, Encoding.UTF8));
-            if (doc.RootElement.TryGetProperty("users", out var usersEl))
+            var json = File.ReadAllText(dataPath, Encoding.UTF8);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("users", out var usersProp))
             {
-                var usersList = new List<EmployeeProfileDto>();
-                foreach (var u in usersEl.EnumerateArray())
-                {
-                    var emp = new EmployeeProfileDto
-                    {
-                        Fio = u.GetProperty("fio").GetString() ?? "Служащий",
-                        Position = u.GetProperty("position").GetString() ?? "Специалист",
-                        Department = u.GetProperty("department").GetString() ?? "ИОГВ",
-                        ExperienceYears = 3,
-                        CareerGoal = "Развитие служебных навыков"
-                    };
-                    if (u.TryGetProperty("courses", out var coursesEl))
-                    {
-                        foreach (var c in coursesEl.EnumerateArray())
-                        {
-                            emp.LearningHistory.Add(new CourseHistoryItemDto
-                            {
-                                CourseName = c.GetProperty("course_name").GetString() ?? "",
-                                CourseType = c.GetProperty("course_type").GetString() ?? "ППК",
-                                Status = c.GetProperty("status").GetString() ?? "Пройден"
-                            });
-                        }
-                    }
-                    usersList.Add(emp);
-                }
-                return usersList;
+                return JsonSerializer.Deserialize<List<EmployeeProfileDto>>(usersProp.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
             }
         }
         return new List<EmployeeProfileDto>();
     }
 
-    public CourseBatchAnalysisRequest ParseToBatchRequest(List<string> filePaths)
+    public Dictionary<string, object> GetDefaultBenchmarks()
     {
-        var users = ParseHistoryFiles(filePaths);
-        var req = new CourseBatchAnalysisRequest
+        var dataPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "learning_history_dataset.json");
+        if (File.Exists(dataPath))
         {
-            BatchId = Guid.NewGuid().ToString()
-        };
-
-        if (users.Any())
-        {
-            req.Employee = users.First();
+            var json = File.ReadAllText(dataPath, Encoding.UTF8);
+            using var doc = JsonDocument.Parse(json);
+            var result = new Dictionary<string, object>();
+            if (doc.RootElement.TryGetProperty("benchmarks_by_position", out var bp))
+            {
+                result["benchmarks_by_position"] = JsonSerializer.Deserialize<Dictionary<string, object>>(bp.GetRawText()) ?? new();
+            }
+            if (doc.RootElement.TryGetProperty("benchmarks_by_position_and_dept", out var bpd))
+            {
+                result["benchmarks_by_position_and_dept"] = JsonSerializer.Deserialize<Dictionary<string, object>>(bpd.GetRawText()) ?? new();
+            }
+            return result;
         }
-
-        return req;
-    }
-
-    private static List<string> ExtractCompetenciesFromName(string name)
-    {
-        var comps = new List<string>();
-        var nameLower = name.ToLowerInvariant();
-
-        if (nameLower.Contains("данн") || nameLower.Contains("цифр") || nameLower.Contains("ии") || nameLower.Contains("информ"))
-            comps.Add("Управление на основе данных");
-        if (nameLower.Contains("проект") || nameLower.Contains("процесс") || nameLower.Contains("менеджмент"))
-            comps.Add("Проектное управление");
-        if (nameLower.Contains("коррупц") || nameLower.Contains("закон") || nameLower.Contains("прав") || nameLower.Contains("обращен"))
-            comps.Add("Нормативная грамотность");
-        if (nameLower.Contains("коммуникац") || nameLower.Contains("язык") || nameLower.Contains("переговор") || nameLower.Contains("клиент"))
-            comps.Add("Деловые коммуникации и клиентоцентричность");
-
-        if (!comps.Any())
-            comps.Add("Профессиональные навыки");
-
-        return comps;
+        return new Dictionary<string, object>();
     }
 
     private static List<List<string>> ReadCsvRows(string filePath)
     {
         var rows = new List<List<string>>();
-        using var stream = File.OpenRead(filePath);
-        var encoding = DetectEncoding(stream);
-        using var reader = new StreamReader(stream, encoding);
+        var lines = File.ReadAllLines(filePath, Encoding.UTF8);
+        if (lines.Length == 0) return rows;
 
-        string? line;
-        char delimiter = ',';
-        bool isFirst = true;
-        while ((line = reader.ReadLine()) != null)
+        char delimiter = lines[0].Contains(';') ? ';' : ',';
+
+        foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line)) continue;
-            if (isFirst)
-            {
-                delimiter = line.Contains(';') ? ';' : ',';
-                isFirst = false;
-            }
-            rows.Add(ParseCsvLine(line, delimiter));
+            var parts = ParseCsvLine(line, delimiter);
+            rows.Add(parts);
         }
+
         return rows;
     }
 
-    private static string GetValueSafely(List<string> row, int index)
+    private static List<string> ParseCsvLine(string line, char delimiter)
     {
-        if (index >= 0 && index < row.Count)
+        var result = new List<string>();
+        bool inQuotes = false;
+        var current = new StringBuilder();
+
+        for (int i = 0; i < line.Length; i++)
         {
-            return AnonymizeText(row[index]);
+            char c = line[i];
+            if (c == '\"')
+            {
+                inQuotes = !inQuotes;
+            }
+            else if (c == delimiter && !inQuotes)
+            {
+                result.Add(current.ToString().Trim('\"', ' '));
+                current.Clear();
+            }
+            else
+            {
+                current.Append(c);
+            }
         }
-        return string.Empty;
+
+        result.Add(current.ToString().Trim('\"', ' '));
+        return result;
     }
 
-    private static string AnonymizeText(string input)
+    private static int FindColumnIndex(List<string> headers, string[] keywords)
     {
-        if (string.IsNullOrWhiteSpace(input)) return string.Empty;
-        var text = input.Trim();
-
-        // Очистка персональных данных в соответствии с требованиями безопасности
-        text = Regex.Replace(text, @"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[email]");
-        text = Regex.Replace(text, @"(?:\+7|8)[\s\-\(\)]*\d{3}[\s\-\(\)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}", "[телефон]");
-        text = Regex.Replace(text, @"\b\d{3}[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{2}\b", "[СНИЛС]");
-        text = Regex.Replace(text, @"\b\d{4}\s?\d{6}\b", "[паспорт]");
-
-        return text;
-    }
-
-    private static int FindColumnIndex(List<string> headers, string[] keywords, int startIdx = 0)
-    {
-        if (startIdx < 0) startIdx = 0;
-        for (int i = startIdx; i < headers.Count; i++)
+        for (int i = 0; i < headers.Count; i++)
         {
-            var header = headers[i].ToLowerInvariant();
-            if (keywords.Any(k => header.Contains(k)))
+            var h = headers[i].ToLowerInvariant();
+            if (keywords.Any(k => h.Contains(k)))
             {
                 return i;
             }
@@ -329,62 +395,55 @@ public class FileParser
         return -1;
     }
 
-    private static List<string> ParseCsvLine(string line, char delimiter = ',')
+    private static string GetValueSafely(List<string> row, int index)
     {
-        var result = new List<string>();
-        var currentField = new StringBuilder();
-        bool inQuotes = false;
-
-        for (int i = 0; i < line.Length; i++)
+        if (index >= 0 && index < row.Count)
         {
-            char c = line[i];
-            if (c == '"')
-            {
-                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
-                {
-                    currentField.Append('"');
-                    i++;
-                }
-                else
-                {
-                    inQuotes = !inQuotes;
-                }
-            }
-            else if (c == delimiter && !inQuotes)
-            {
-                result.Add(currentField.ToString().Trim());
-                currentField.Clear();
-            }
-            else
-            {
-                currentField.Append(c);
-            }
+            return row[index]?.Trim() ?? "";
         }
-        result.Add(currentField.ToString().Trim());
-        return result;
+        return "";
     }
 
-    private static Encoding DetectEncoding(Stream stream)
+    private static List<string> ExtractCompetenciesFromName(string courseName)
     {
-        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-        var cp1251 = System.Text.Encoding.GetEncoding(1251);
+        var comps = new List<string>();
+        var text = courseName.ToLowerInvariant();
 
-        byte[] buffer = new byte[1024];
-        int bytesRead = stream.Read(buffer, 0, buffer.Length);
-        if (stream.CanSeek) stream.Position = 0;
+        if (text.Contains("цифр") || text.Contains("данн") || text.Contains("ии") || text.Contains("информ"))
+            comps.Add("Цифровые компетенции и данные");
+        if (text.Contains("коммуник") || text.Contains("клиент") || text.Contains("обращен"))
+            comps.Add("Клиентоцентричность и коммуникации");
+        if (text.Contains("управлен") || text.Contains("руковод") || text.Contains("лидер"))
+            comps.Add("Регулярный менеджмент и лидерство");
+        if (text.Contains("проект") || text.Contains("процесс") || text.Contains("бережлив"))
+            comps.Add("Проектное и процессное управление");
+        if (text.Contains("право") || text.Contains("закон") || text.Contains("норм") || text.Contains("коррупц"))
+            comps.Add("Правовая грамотность и антикоррупционные стандарты");
 
-        string utf8String = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-        if (utf8String.Contains("\uFFFD"))
-        {
-            return cp1251;
-        }
-
-        return Encoding.UTF8;
+        if (comps.Count == 0) comps.Add("Профессиональное развитие ГГС");
+        return comps;
     }
 
     public static string ExtractCourseName(string fileName)
     {
-        string nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
-        return nameWithoutExt.Replace('_', ' ').Trim();
+        var clean = Path.GetFileNameWithoutExtension(fileName);
+        clean = Regex.Replace(clean, @"^\d{2}\.\d{2}-\d{2}\.\d{2}\s*", "");
+        return string.IsNullOrWhiteSpace(clean) ? "Индивидуальная траектория обучения" : clean;
+    }
+
+    public static string AnonymizePii(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+
+        // Email
+        text = Regex.Replace(text, @"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "user_***@***.ru");
+        // Phone
+        text = Regex.Replace(text, @"(\+7|8)[\s\-]??\(?\d{3}\)?[\s\-]??\d{3}[\s\-]??\d{2}[\s\-]??\d{2}", "+7 (***) ***-**-**");
+        // SNILS
+        text = Regex.Replace(text, @"\b\d{3}-\d{3}-\d{3}\s\d{2}\b", "***-***-*** **");
+        // Passport
+        text = Regex.Replace(text, @"\b\d{4}\s\d{6}\b", "**** ******");
+
+        return text;
     }
 }

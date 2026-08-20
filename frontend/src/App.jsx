@@ -15,6 +15,7 @@ import {
   unarchiveAnalysisReport,
 } from "./api";
 import { AppLayout } from "./components/Layout";
+import { AccessibilityToolbar } from "./components/AccessibilityToolbar";
 import { ConfirmDialog, NamingDialog, ToastStack } from "./components/Feedback";
 import { AuthPage, SettingsPage, StudentsPage, CourseReportDetailPage } from "./components/Pages";
 import { TrajectoryConstructor } from "./components/TrajectoryConstructor";

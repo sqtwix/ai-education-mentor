@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-echo "DEPLOYING AI REVIEW ANALYZER (OFFLINE/LOCAL)"
+echo "DEPLOYING AI EDUCATION MENTOR - IOT AGENT (LINUX/MAC)"
 
 # Ensure execution from repository root
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -21,25 +21,25 @@ DB_NAME=aichecker
 DB_USER=aichecker_user
 DB_PASSWORD=aichecker_password
 JWT_SECRET=super_secret_jwt_key_aichecker_enterprise_2026!
-JWT_ISSUER=ai-review-analyzer
-JWT_AUDIENCE=ai-review-analyzer-frontend
+JWT_ISSUER=ai-education-mentor
+JWT_AUDIENCE=ai-education-mentor-frontend
 JWT_EXPIRY_MINUTES=1440
 DEEPSEEK_API_KEY=
 SBERGPT_API_KEY=
-VITE_OFFLINE_MODE=true
+VITE_OFFLINE_MODE=false
 EOT
     fi
 else
     echo "--> Existing .env file found."
 fi
 
-# 2. Local AI Model Download (Qwen GGUF)
+# 2. Local AI Model Download (Qwen 2.5 GGUF)
 mkdir -p models
-MODEL_FILE="Qwen3.5-0.8B-Q8_0.gguf"
+MODEL_FILE="qwen2.5-0.5b-instruct-q8_0.gguf"
 MODEL_PATH="models/$MODEL_FILE"
 
 if [ ! -f "$MODEL_PATH" ]; then
-    echo "--> Downloading local GGUF model ($MODEL_FILE)..."
+    echo "--> Downloading local Qwen2.5 GGUF model ($MODEL_FILE)..."
     curl -L -o "$MODEL_PATH" "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf"
     echo "--> Model downloaded successfully."
 else
@@ -48,13 +48,15 @@ fi
 
 # 3. Docker Container Deployment
 echo "--> Starting Docker containers..."
-docker compose down -v 2>/dev/null || true
+docker compose down 2>/dev/null || true
 docker compose up --build -d
 
-echo "--> Cleaning up unused Docker images..."
+echo "--> Cleaning up dangling Docker images..."
 docker image prune -f 2>/dev/null || true
 
 echo "=================================================="
 echo "DEPLOYMENT SUCCESSFUL!"
 echo "Open application in browser: http://localhost/"
+echo "Backend Swagger API:        http://localhost:5000/swagger"
+echo "AI-Driver FastAPI Docs:     http://localhost:8000/docs"
 echo "=================================================="

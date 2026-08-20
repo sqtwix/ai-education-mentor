@@ -1,97 +1,101 @@
-using ApiCore.Models;
 using ApiCore.Data;
-using System.Text;
-using System.Text.Json;
+using ApiCore.Models;
 using System.Collections.Concurrent;
-using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using System.IO.Compression;
+using System.Text;
 
 namespace ApiCore.Services;
 
 public class AnalysisService
 {
-    public static readonly ConcurrentDictionary<string, (string Status, CourseBatchAnalysisResult? Result, string? Error)> TaskTracker = new();
-
-    private readonly ValidationService _validationService;
-    private readonly ILogger<AnalysisService> _logger;
-    private readonly FileParser _fileParser;
-    private readonly HttpClient _httpClient;
     private readonly AppDbContext _dbContext;
+    private readonly HttpClient _httpClient;
+    private readonly FileParser _fileParser;
+    private readonly ILogger<AnalysisService> _logger;
 
-    public AnalysisService(ValidationService validationService, 
-        ILogger<AnalysisService> logger,
-        FileParser fileParser,
+    public static readonly ConcurrentDictionary<string, (string Status, object? Result, string? Error)> TaskTracker = new();
+
+    public AnalysisService(
+        AppDbContext dbContext,
         HttpClient httpClient,
-        AppDbContext dbContext)  
+        FileParser fileParser,
+        ILogger<AnalysisService> logger)
     {
-        _validationService = validationService;
-        _logger = logger;
+        _dbContext = dbContext;
         _httpClient = httpClient;
         _fileParser = fileParser;
-        _dbContext = dbContext;
+        _logger = logger;
     }
 
     public async Task ProcessTrajectoryAsync(string taskId, Guid userId, EmployeeProfileDto employee, string modelType)
     {
-        _logger.LogInformation($"[Task {taskId}] Начало формирования индивидуальной траектории обучения для {employee.Fio} ({employee.Position}).");
+        _logger.LogInformation($"[Task {taskId}] Запуск генерации ИОТ для {employee.Fio} ({employee.Position}) через {modelType}");
         TaskTracker[taskId] = ("Processing", null, null);
 
         var report = await _dbContext.AnalysisReports.FindAsync(taskId);
 
         try
         {
-            var payload = new
+            var requestPayload = new
             {
                 request_id = taskId,
-                employee = employee,
-                model_type = modelType
+                employee = new
+                {
+                    fio = employee.Fio,
+                    position = employee.Position,
+                    department = employee.Department,
+                    experience_years = employee.ExperienceYears,
+                    career_goal = employee.CareerGoal,
+                    learning_history = employee.LearningHistory?.Select(h => new
+                    {
+                        course_name = h.CourseName,
+                        course_type = h.CourseType,
+                        status = h.Status
+                    }).ToList()
+                },
+                model_type = modelType.ToLowerInvariant()
             };
 
-            var jsonSerializerOptions = new JsonSerializerOptions { WriteIndented = false };
-            string jsonString = JsonSerializer.Serialize(payload, jsonSerializerOptions);
-            var httpContent = new StringContent(jsonString, Encoding.UTF8, "application/json");
-
-            string endpoint = modelType?.ToLowerInvariant() switch
+            string endpoint = modelType.ToLowerInvariant() switch
             {
-                "gigachat" or "sbergpt" => "agents/get_sbergpt_data_analysis",
-                "qwen_local" or "qwen" or "local" => "agents/get_qwen_local_data_analysis",
-                _ => "agents/get_deepseek_data_analysis"
+                "sbergpt" or "gigachat" => "/agents/get_sbergpt_data_analysis",
+                "qwen_local" => "/agents/get_qwen_local_data_analysis",
+                _ => "/agents/get_deepseek_data_analysis"
             };
 
-            _logger.LogInformation($"[Task {taskId}] Отправка запроса в ai-driver ({endpoint})...");
-            var response = await _httpClient.PostAsync(endpoint, httpContent);
+            var jsonContent = new StringContent(
+                JsonSerializer.Serialize(requestPayload),
+                Encoding.UTF8,
+                "application/json"
+            );
 
-            if (response.IsSuccessStatusCode)
+            _logger.LogInformation($"[Task {taskId}] Отправка запроса в ai-driver: {endpoint}");
+            var response = await _httpClient.PostAsync(endpoint, jsonContent);
+
+            if (!response.IsSuccessStatusCode)
             {
-                string responseBody = await response.Content.ReadAsStringAsync();
-                var result = JsonSerializer.Deserialize<CourseBatchAnalysisResult>(responseBody, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                TaskTracker[taskId] = ("Completed", result, null);
-
-                if (report != null)
-                {
-                    report.Status = "Completed";
-                    report.ResultJson = responseBody;
-                    await _dbContext.SaveChangesAsync();
-                }
-                _logger.LogInformation($"[Task {taskId}] Траектория успешно сформирована и сохранена.");
+                var errorText = await response.Content.ReadAsStringAsync();
+                throw new Exception($"ai-driver вернул ошибку ({response.StatusCode}): {errorText}");
             }
-            else
+
+            var responseJson = await response.Content.ReadAsStringAsync();
+            var resultDoc = JsonSerializer.Deserialize<JsonElement>(responseJson);
+
+            TaskTracker[taskId] = ("Completed", resultDoc, null);
+
+            if (report != null)
             {
-                string errorContext = await response.Content.ReadAsStringAsync();
-                _logger.LogError($"[Task {taskId}] ai-driver вернул ошибку {response.StatusCode}: {errorContext}");
-                TaskTracker[taskId] = ("Failed", null, $"ai-driver error {response.StatusCode}: {errorContext}");
-
-                if (report != null)
-                {
-                    report.Status = "Failed";
-                    report.Error = $"ai-driver error {response.StatusCode}: {errorContext}";
-                    await _dbContext.SaveChangesAsync();
-                }
+                report.Status = "Completed";
+                report.ResultJson = responseJson;
+                await _dbContext.SaveChangesAsync();
             }
+
+            _logger.LogInformation($"[Task {taskId}] Генерация ИОТ успешно завершена.");
         }
         catch (Exception ex)
         {
-            _logger.LogError($"[Task {taskId}] Ошибка при генерации траектории: {ex.Message}");
+            _logger.LogError($"[Task {taskId}] Ошибка при генерации ИОТ: {ex.Message}");
             TaskTracker[taskId] = ("Failed", null, ex.Message);
 
             if (report != null)
@@ -112,57 +116,100 @@ public class AnalysisService
 
         try
         {
-            // 0. Распаковка ZIP архивов
-            var expandedPaths = new List<string>();
-            foreach (var path in filePaths)
+            // 0. Распаковка архивов и чтение всех файлов
+            var users = _fileParser.ParseHistoryFiles(filePaths);
+
+            if (users.Count == 0)
             {
-                var ext = Path.GetExtension(path).ToLowerInvariant();
-                if (ext == ".zip")
+                // Если не найдено пользователей, создаем типовой профиль ГГС
+                users.Add(new EmployeeProfileDto
                 {
-                    _logger.LogInformation($"[Task {taskId}] Обнаружен ZIP-архив: {Path.GetFileName(path)}. Распаковка...");
-                    var zipExtractDir = Path.Combine(tempDir, "extracted_" + Path.GetFileNameWithoutExtension(path));
-                    Directory.CreateDirectory(zipExtractDir);
+                    Fio = "Государственный гражданский служащий",
+                    Position = "Главный специалист",
+                    Department = "Администрация Губернатора Санкт-Петербурга",
+                    ExperienceYears = 3,
+                    CareerGoal = "Развитие управленческих и цифровых компетенций в сфере госуправления"
+                });
+            }
 
-                    using var archive = ZipFile.OpenRead(path);
-                    foreach (var entry in archive.Entries)
+            // Обрабатываем пользователей: если передан 1 пользователь - генерируем для него, если несколько - генерируем для всех (до 15 за раз)
+            var generatedTrajectories = new List<JsonElement>();
+
+            int batchLimit = Math.Min(users.Count, 15);
+            for (int i = 0; i < batchLimit; i++)
+            {
+                var emp = users[i];
+                string singleTaskId = i == 0 ? taskId : $"{taskId}_user_{i + 1}";
+
+                var requestPayload = new
+                {
+                    request_id = singleTaskId,
+                    employee = new
                     {
-                        if (string.IsNullOrEmpty(entry.Name)) continue;
-                        if (entry.FullName.StartsWith("__MACOSX") || entry.Name.StartsWith("._") || entry.Name.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        var nestedExt = Path.GetExtension(entry.Name).ToLowerInvariant();
-                        if (nestedExt == ".xlsx" || nestedExt == ".xls" || nestedExt == ".csv" || nestedExt == ".json")
+                        fio = emp.Fio,
+                        position = emp.Position,
+                        department = emp.Department,
+                        experience_years = emp.ExperienceYears,
+                        career_goal = emp.CareerGoal,
+                        learning_history = emp.LearningHistory?.Select(h => new
                         {
-                            var destinationPath = Path.Combine(zipExtractDir, entry.Name);
-                            int counter = 1;
-                            while (File.Exists(destinationPath))
-                            {
-                                var nameWithoutExt = Path.GetFileNameWithoutExtension(entry.Name);
-                                destinationPath = Path.Combine(zipExtractDir, $"{nameWithoutExt}_{counter++}{nestedExt}");
-                            }
-                            entry.ExtractToFile(destinationPath);
-                            expandedPaths.Add(destinationPath);
-                        }
-                    }
-                }
-                else
+                            course_name = h.CourseName,
+                            course_type = h.CourseType,
+                            status = h.Status
+                        }).ToList()
+                    },
+                    model_type = modelType.ToLowerInvariant()
+                };
+
+                string endpoint = modelType.ToLowerInvariant() switch
                 {
-                    expandedPaths.Add(path);
+                    "sbergpt" or "gigachat" => "/agents/get_sbergpt_data_analysis",
+                    "qwen_local" => "/agents/get_qwen_local_data_analysis",
+                    _ => "/agents/get_deepseek_data_analysis"
+                };
+
+                var jsonContent = new StringContent(
+                    JsonSerializer.Serialize(requestPayload),
+                    Encoding.UTF8,
+                    "application/json"
+                );
+
+                var response = await _httpClient.PostAsync(endpoint, jsonContent);
+                if (response.IsSuccessStatusCode)
+                {
+                    var respStr = await response.Content.ReadAsStringAsync();
+                    var respDoc = JsonSerializer.Deserialize<JsonElement>(respStr);
+                    if (respDoc.TryGetProperty("trajectory", out var trajProp))
+                    {
+                        generatedTrajectories.Add(trajProp);
+                    }
+                    else
+                    {
+                        generatedTrajectories.Add(respDoc);
+                    }
                 }
             }
 
-            // 1. Извлекаем профиль пользователя из загруженного файла истории
-            var users = _fileParser.ParseHistoryFiles(expandedPaths);
-            var targetEmployee = users.FirstOrDefault() ?? new EmployeeProfileDto
+            var primaryResult = generatedTrajectories.FirstOrDefault();
+            var combinedResult = new
             {
-                Fio = "Государственный служащий",
-                Position = "Главный специалист",
-                Department = "Администрация Санкт-Петербурга",
-                ExperienceYears = 3,
-                CareerGoal = "Развитие ключевых служебных навыков"
+                batch_id = taskId,
+                total_profiles_processed = generatedTrajectories.Count,
+                trajectory = primaryResult,
+                courses_analysis = generatedTrajectories
             };
 
-            await ProcessTrajectoryAsync(taskId, userId, targetEmployee, modelType);
+            var finalResultElement = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(combinedResult));
+            TaskTracker[taskId] = ("Completed", finalResultElement, null);
+
+            if (report != null)
+            {
+                report.Status = "Completed";
+                report.ResultJson = JsonSerializer.Serialize(combinedResult);
+                await _dbContext.SaveChangesAsync();
+            }
+
+            _logger.LogInformation($"[Task {taskId}] Пакетная обработка {generatedTrajectories.Count} профилей успешно завершена.");
         }
         catch (Exception ex)
         {
@@ -178,16 +225,9 @@ public class AnalysisService
         }
         finally
         {
-            try
+            if (Directory.Exists(tempDir))
             {
-                if (Directory.Exists(tempDir))
-                {
-                    Directory.Delete(tempDir, true);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"[Task {taskId}] Не удалось удалить временную директорию {tempDir}: {ex.Message}");
+                try { Directory.Delete(tempDir, true); } catch { /* ignore */ }
             }
         }
     }
