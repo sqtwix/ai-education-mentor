@@ -199,13 +199,21 @@ export function TrajectoryRoadmap({ trajectory, onExportPdf, onExportXlsx, onExp
               </div>
               <div className="radar-chart-wrapper" style={{ height: 260 }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart data={radarData} outerRadius="75%">
-                    <PolarGrid stroke="#e2e8f0" />
-                    <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11, fill: "#475569" }} />
-                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 10 }} />
-                    <Radar name="Текущий уровень" dataKey="current" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.4} />
-                    <Radar name="Целевой уровень" dataKey="target" stroke="#1b559b" fill="#1b559b" fillOpacity={0.5} />
-                    <Tooltip />
+                  <RadarChart data={radarData} outerRadius="70%">
+                    <PolarGrid stroke="var(--line)" />
+                    <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: "var(--text-soft)" }} />
+                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 9, fill: "var(--muted)" }} stroke="var(--line)" />
+                    <Radar name="Текущий уровень" dataKey="current" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.35} />
+                    <Radar name="Целевой уровень" dataKey="target" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.45} />
+                    <Tooltip 
+                      contentStyle={{ 
+                        background: "var(--surface)", 
+                        borderColor: "var(--line)", 
+                        color: "var(--heading)", 
+                        borderRadius: "8px",
+                        boxShadow: "var(--shadow)"
+                      }} 
+                    />
                   </RadarChart>
                 </ResponsiveContainer>
               </div>
