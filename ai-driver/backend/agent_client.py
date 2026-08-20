@@ -1,4 +1,4 @@
-﻿from openai import OpenAI
+from openai import OpenAI
 import json
 import logging
 
@@ -32,11 +32,11 @@ class AgentClient:
         if not base_url or not agent_model:
             raise Exception("AgentClient Initialization Exception: base_url and agent_model are required")
         try:
-            self.api_key = api_key
+            self.api_key = api_key if (api_key and api_key.strip()) else "sk-placeholder-key"
             self.base_url = base_url
             self.model = agent_model
             self.specialization = specialization
-            # OpenAI клиент работает для всех совместимых API (DeepSeek, GigaChat, vLLM)
+            # OpenAI клиент работает для всех совместимых API (DeepSeek, GigaChat, vLLM/llama.cpp)
             self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         except Exception as e:
             raise Exception("AgentClient Initialization Exception: agent initialization failed - " + str(e))

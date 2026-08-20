@@ -25,25 +25,25 @@ class AgentFactory:
 
         match model.lower():
             case "deepseek":
-                api_key = os.getenv("DEEPSEEK_API_KEY", "not-needed")
-                base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-                agent_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+                api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip() or "sk-placeholder-deepseek"
+                base_url = (os.getenv("DEEPSEEK_BASE_URL") or "").strip() or "https://api.deepseek.com"
+                agent_model = (os.getenv("DEEPSEEK_MODEL") or "").strip() or "deepseek-chat"
 
             case "gigachat" | "sbergpt":
-                api_key = os.getenv("SBERGPT_API_KEY", "not-needed")
-                base_url = os.getenv("SBERGPT_BASE_URL", "https://gigachat.devices.sberbank.ru/api/v1/")
-                agent_model = os.getenv("SBERGPT_MODEL", "GigaChat-Pro")
+                api_key = (os.getenv("SBERGPT_API_KEY") or "").strip() or "sk-placeholder-sber"
+                base_url = (os.getenv("SBERGPT_BASE_URL") or "").strip() or "https://gigachat.devices.sberbank.ru/api/v1/"
+                agent_model = (os.getenv("SBERGPT_MODEL") or "").strip() or "GigaChat-Pro"
 
             case "qwen_local" | "qwen" | "local":
                 # llama.cpp OpenAI-совместимый сервер
                 api_key = "not-needed"
-                base_url = os.getenv("QWEN_LOCAL_URL", "http://qwen-local:8080/v1")
-                agent_model = os.getenv("QWEN_LOCAL_MODEL", "local-model")
+                base_url = (os.getenv("QWEN_LOCAL_URL") or "").strip() or "http://qwen-local:8080/v1"
+                agent_model = (os.getenv("QWEN_LOCAL_MODEL") or "").strip() or "local-model"
 
             case _:
-                api_key = os.getenv("DEEPSEEK_API_KEY", "not-needed")
-                base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-                agent_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+                api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip() or "sk-placeholder-deepseek"
+                base_url = (os.getenv("DEEPSEEK_BASE_URL") or "").strip() or "https://api.deepseek.com"
+                agent_model = (os.getenv("DEEPSEEK_MODEL") or "").strip() or "deepseek-chat"
 
         try:
             for specialization in self.SPECIALIZATIONS:
