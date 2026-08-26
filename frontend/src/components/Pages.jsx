@@ -2,13 +2,18 @@ import { useState, useMemo } from "react";
 import { 
   ArchiveRestore, ArrowLeft, Construction, Eye, Layers3, Monitor, Moon, PanelLeftClose, 
   PanelLeftOpen, Search, Sun, Pencil, Archive, Save, BookOpen, BarChart3, MessageSquare, 
-  AlertTriangle, CheckCircle, HelpCircle, ChevronRight, ThumbsUp
+  ChevronRight, AlertTriangle
 } from "lucide-react";
 import { buildCourseReportViewModel } from "../reportViewModel";
 import { AnalyticalReportTab } from "./report/AnalyticalReportTab";
 import { DashboardTab } from "./report/DashboardTab";
 import { QualitativeTab } from "./report/QualitativeTab";
 import { TrajectoryRoadmap } from "./TrajectoryRoadmap";
+import {
+  getBatchTrajectories,
+  requiresExplicitBatchSelection,
+  resolveTrajectoryForDisplay,
+} from "../trajectorySelection";
 
 // ========================= Auth Page Component =========================
 export function AuthPage({
@@ -26,6 +31,7 @@ export function AuthPage({
   onRegisterPasswordChange,
   onSubmit,
   onClearError,
+  isSubmitting = false,
 }) {
   const isLogin = mode === "login";
 
@@ -33,8 +39,8 @@ export function AuthPage({
     <section className="page auth-page active" id={mode} data-title={isLogin ? "Авторизация" : "Регистрация"}>
       <form className="auth-card" onSubmit={onSubmit}>
         <p className="eyebrow">{isLogin ? "Вход" : "Регистрация"}</p>
-        <h2>{isLogin ? "Добро пожаловать" : "Создайте рабочее пространство"}</h2>
-        {authError && <div className="error-box">{authError}</div>}
+        <h1>{isLogin ? "Добро пожаловать" : "Создайте аккаунт"}</h1>
+        {authError && <div className="error-box" role="alert">{authError}</div>}
 
         {!isLogin && (
           <label>
@@ -42,6 +48,8 @@ export function AuthPage({
             <input
               type="text"
               placeholder="Ирина"
+              autoComplete="name"
+              maxLength={100}
               value={registerUsername}
               onChange={(e) => onRegisterUsernameChange(e.target.value)}
               required
@@ -54,6 +62,7 @@ export function AuthPage({
           <input
             type="email"
             placeholder="name@university.ru"
+            autoComplete="email"
             value={isLogin ? loginEmail : registerEmail}
             onChange={(e) => (isLogin ? onLoginEmailChange(e.target.value) : onRegisterEmailChange(e.target.value))}
             required
@@ -64,15 +73,18 @@ export function AuthPage({
           Пароль
           <input
             type="password"
-            placeholder={isLogin ? "Пароль" : "Минимум 6 символов"}
+            placeholder={isLogin ? "Пароль" : "От 12 до 128 символов"}
+            autoComplete={isLogin ? "current-password" : "new-password"}
+            minLength={isLogin ? undefined : 12}
+            maxLength={128}
             value={isLogin ? loginPassword : registerPassword}
             onChange={(e) => (isLogin ? onLoginPasswordChange(e.target.value) : onRegisterPasswordChange(e.target.value))}
             required
           />
         </label>
 
-        <button type="submit" className="primary-button wide">
-          {isLogin ? "Войти" : "Зарегистрироваться"}
+        <button type="submit" className="primary-button wide" disabled={isSubmitting}>
+          {isSubmitting ? (isLogin ? "Входим…" : "Регистрируем…") : (isLogin ? "Войти" : "Зарегистрироваться")}
         </button>
         <a href={isLogin ? "#register" : "#login"} onClick={onClearError}>
           {isLogin ? "Создать аккаунт" : "Уже есть аккаунт"}
@@ -107,6 +119,8 @@ export function SettingsPage({
   onSidebarResizeStart,
   archivedReports = [],
   onUnarchiveReport,
+  archiveLoadError = "",
+  onRetryArchive,
 }) {
   const [activeGroup, setActiveGroup] = useState("interface");
   const [archiveQuery, setArchiveQuery] = useState("");
@@ -131,6 +145,7 @@ export function SettingsPage({
       data-title="Настройки"
       style={{ "--settings-sidebar-width": `${sidebarWidth}px` }}
     >
+      <h1 className="sr-only">Настройки</h1>
       <header className="settings-topbar">
         <a className="ghost-button settings-back" href="#upload">
           <ArrowLeft size={17} strokeWidth={2.2} />
@@ -141,6 +156,8 @@ export function SettingsPage({
           className="icon-action-button settings-sidebar-toggle"
           aria-label={isSidebarCollapsed ? "Показать панель настроек" : "Скрыть панель настроек"}
           title={isSidebarCollapsed ? "Показать панель настроек" : "Скрыть панель настроек"}
+          aria-expanded={!isSidebarCollapsed}
+          aria-controls="settings-groups"
           onClick={onSidebarToggle}
         >
           {isSidebarCollapsed ? (
@@ -151,10 +168,11 @@ export function SettingsPage({
         </button>
       </header>
       <div className="settings-screen">
-        <aside className="settings-side" aria-label="Группы настроек">
+        <aside className="settings-side" id="settings-groups" aria-label="Группы настроек">
           <button
             type="button"
             className={`settings-group-button ${activeGroup === "interface" ? "active" : ""}`}
+            aria-pressed={activeGroup === "interface"}
             onClick={() => setActiveGroup("interface")}
           >
             Интерфейс
@@ -162,6 +180,7 @@ export function SettingsPage({
           <button
             type="button"
             className={`settings-group-button ${activeGroup === "archive" ? "active" : ""}`}
+            aria-pressed={activeGroup === "archive"}
             onClick={() => setActiveGroup("archive")}
           >
             Архив
@@ -213,7 +232,7 @@ export function SettingsPage({
                 </div>
               </section>
 
-              <section className="panel settings-panel">
+              <section className="panel settings-panel settings-panel-toggle">
                 <div className="settings-copy">
                   <Eye size={20} strokeWidth={2.2} />
                   <div>
@@ -236,7 +255,7 @@ export function SettingsPage({
                 </div>
               </section>
 
-              <section className="panel settings-panel">
+              <section className="panel settings-panel settings-panel-toggle">
                 <div className="settings-copy">
                   <Layers3 size={20} strokeWidth={2.2} />
                   <div>
@@ -259,6 +278,14 @@ export function SettingsPage({
 
               <section className="panel archive-panel">
                 <p className="muted archive-description">Здесь хранятся отчеты, скрытые из основной истории.</p>
+
+                {archiveLoadError && (
+                  <div className="archive-load-error" role="alert">
+                    <AlertTriangle size={18} aria-hidden="true" />
+                    <span>{archiveLoadError}</span>
+                    <button type="button" className="secondary-button compact" onClick={onRetryArchive}>Повторить</button>
+                  </div>
+                )}
 
                 <label className="archive-search">
                   <Search size={18} strokeWidth={2.2} aria-hidden="true" />
@@ -297,7 +324,7 @@ export function SettingsPage({
                     <p className="muted">
                       {archiveQuery.trim()
                         ? "Попробуйте изменить поисковый запрос."
-                        : "Архивированные отчеты появятся здесь."}
+                        : "Архивируйте завершённый отчёт из его меню — после этого он появится здесь и его можно будет восстановить."}
                     </p>
                     {!archiveQuery.trim() && (
                       <a className="secondary-button state-action" href="#upload">
@@ -443,7 +470,7 @@ export function StudentsPage({ reports, onNewAnalysis }) {
           <p className="eyebrow">Кабинет методиста</p>
           <h2>Слушатели и курсы</h2>
           <p className="muted">
-            Сводные аналитические данные по всем опросам из истории. Индикаторы удовлетворенности, распределение категорий слушателей и форматы обучения.
+            Сводные данные по сформированным траекториям: охват слушателей, должности, ИОГВ и форматы обучения.
           </p>
         </div>
         <span className="badge">Все данные</span>
@@ -463,7 +490,7 @@ export function StudentsPage({ reports, onNewAnalysis }) {
             <div className="metric-card">
               <span>Слушателей охвачено</span>
               <strong>{aggregatedData.totalCount}</strong>
-              <small>человек по опросам</small>
+              <small>человек в траекториях</small>
             </div>
             <div className="metric-card normal">
               <span>Удовлетворенность</span>
@@ -523,7 +550,7 @@ export function StudentsPage({ reports, onNewAnalysis }) {
 
           <section className="panel students-course-panel">
             <div className="section-heading students-course-heading">
-              <h3>Базы опросов по курсам</h3>
+              <h3>История обучения по программам</h3>
               <div className="control-search students-course-search">
                 <Search size={16} strokeWidth={2.2} />
                 <input
@@ -541,7 +568,7 @@ export function StudentsPage({ reports, onNewAnalysis }) {
                   <tr>
                     <th>Название курса</th>
                     <th>Период</th>
-                    <th>Анкет</th>
+                    <th>Записей</th>
                     <th>Ср. Оценка</th>
                     <th>Отстраненные</th>
                     <th>Ключевая тема</th>
@@ -594,18 +621,16 @@ export function CourseReportDetailPage({
   handleArchiveReport,
   isSaveMenuOpen,
   setIsSaveMenuOpen,
-  isProfileMenuOpen,
   setIsProfileMenuOpen,
   handleExportReport,
   saveActionsRef,
 }) {
   const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, qualitative, report
   const [qualActiveTab, setQualActiveTab] = useState("topics"); // topics, sentiment, problems, quotes, recommendations
+  const [selectedTrajectoryIndex, setSelectedTrajectoryIndex] = useState(null);
   const exportFormats = [
     { key: "pdf", label: "PDF" },
-    { key: "docx", label: "DOCX" },
-    { key: "excel", label: "Excel" },
-    { key: "csv", label: "CSV" },
+    { key: "xlsx", label: "XLSX" },
     { key: "json", label: "JSON" },
   ];
 
@@ -617,6 +642,17 @@ export function CourseReportDetailPage({
     period,
     studentsCount,
   } = reportViewModel;
+  const batchTrajectories = getBatchTrajectories(report.result);
+  const batchSelectionRequired = requiresExplicitBatchSelection(report.result);
+  const trajectoryForRoadmap = resolveTrajectoryForDisplay(report.result, selectedTrajectoryIndex);
+  const hasTrajectory = Boolean(trajectoryForRoadmap?.stages);
+  const isDegraded = report.status === "CompletedWithLimitations"
+    || report.result?.quality_status === "degraded"
+    || trajectoryForRoadmap?.quality_status === "degraded";
+  const exportNeedsProfileSelection = batchSelectionRequired && selectedTrajectoryIndex === null;
+  const reportForExport = batchSelectionRequired && trajectoryForRoadmap
+    ? { ...report, result: { ...report.result, trajectory: trajectoryForRoadmap } }
+    : report;
 
   return (
     <section className="page active" id="report-detail" data-title="Детали отчёта">
@@ -629,6 +665,7 @@ export function CourseReportDetailPage({
                 value={editTitleValue}
                 onChange={(e) => setEditTitleValue(e.target.value)}
                 className="inline-rename-input"
+                maxLength={255}
                 required
                 autoFocus
               />
@@ -662,7 +699,7 @@ export function CourseReportDetailPage({
           )}
           <h2 id="report-title-heading">{report.title}</h2>
           <p className="muted report-meta-line">
-            Период: <b>{period}</b> · Анкетировано слушателей: <b>{studentsCount} чел.</b>
+            Период: <b>{period}</b> · Записей обучения: <b>{studentsCount}</b>
           </p>
         </div>
 
@@ -680,6 +717,7 @@ export function CourseReportDetailPage({
             <button
               type="button"
               className="icon-action-button save-action"
+              disabled={isDegraded || exportNeedsProfileSelection}
               onClick={() => {
                 setIsProfileMenuOpen(false);
                 setIsSaveMenuOpen((isOpen) => !isOpen);
@@ -687,7 +725,11 @@ export function CourseReportDetailPage({
               aria-expanded={isSaveMenuOpen}
               aria-haspopup="menu"
               aria-label="Сохранить"
-              title="Сохранить"
+              title={isDegraded
+                ? "Экспорт недоступен до экспертной проверки"
+                : exportNeedsProfileSelection
+                  ? "Сначала выберите профиль"
+                  : "Сохранить"}
             >
               <Save size={18} strokeWidth={2.2} />
             </button>
@@ -698,7 +740,7 @@ export function CourseReportDetailPage({
                     key={format.key}
                     type="button"
                     role="menuitem"
-                    onClick={() => handleExportReport(report, format.key)}
+                    onClick={() => handleExportReport(reportForExport, format.key)}
                   >
                     {format.label}
                   </button>
@@ -709,14 +751,49 @@ export function CourseReportDetailPage({
         </div>
       </div>
 
+      {isDegraded && (
+        <div className="trajectory-warning-box" role="alert">
+          <AlertTriangle size={18} />
+          <div>
+            <strong>Результат сформирован в резервном режиме</strong>
+            <p>Модель анализа не завершила работу. Требуется экспертная проверка; экспорт временно недоступен.</p>
+          </div>
+        </div>
+      )}
+
+      {batchSelectionRequired && (
+        <section className="panel batch-selector-panel">
+          <div>
+            <p className="eyebrow">Batch-режим</p>
+            <h3>Выберите профиль для просмотра траектории</h3>
+            <p className="muted">
+              Ни один профиль не открывается автоматически: выбор определяет, какую траекторию показывать и экспортировать.
+            </p>
+          </div>
+          <div className="batch-selector-list">
+            {batchTrajectories.map((trajectory, index) => (
+              <button
+                key={trajectory.trajectory_id || index}
+                type="button"
+                className={`secondary-button compact ${selectedTrajectoryIndex === index ? "active" : ""}`}
+                onClick={() => setSelectedTrajectoryIndex(index)}
+              >
+                {trajectory.employee_name || `Профиль ${index + 1}`}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* If the report contains an Individual Learning Trajectory, render the interactive TrajectoryRoadmap view */}
-      {Boolean(report.result?.trajectory || report.result?.stages || (report.result?.courses_analysis?.[0]?.stages)) ? (
+      {batchSelectionRequired && selectedTrajectoryIndex === null ? null : hasTrajectory ? (
         <div style={{ marginTop: "1rem" }}>
           <TrajectoryRoadmap
-            trajectory={report.result?.trajectory || report.result?.courses_analysis?.[0] || report.result}
-            onExportPdf={() => handleExportReport(report, "pdf")}
-            onExportXlsx={() => handleExportReport(report, "xlsx")}
-            onExportJson={() => handleExportReport(report, "json")}
+            trajectory={trajectoryForRoadmap}
+            exportDisabled={isDegraded}
+            onExportPdf={() => handleExportReport(reportForExport, "pdf")}
+            onExportXlsx={() => handleExportReport(reportForExport, "xlsx")}
+            onExportJson={() => handleExportReport(reportForExport, "json")}
           />
         </div>
       ) : (
@@ -725,7 +802,7 @@ export function CourseReportDetailPage({
           <nav className="report-tabs" aria-label="Разделы отчета">
             {[
               { key: "dashboard", label: "Панель показателей", icon: BarChart3 },
-              { key: "qualitative", label: "Качественный анализ отзывов", icon: MessageSquare },
+              { key: "qualitative", label: "Качественные сигналы", icon: MessageSquare },
               { key: "report", label: "Аналитическая справка", icon: BookOpen }
             ].map((t) => {
               const Icon = t.icon;

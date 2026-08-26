@@ -1,4 +1,5 @@
-﻿import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
+﻿import { useEffect, useRef } from "react";
+import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 
 const toastIcons = {
   success: CheckCircle2,
@@ -47,11 +48,56 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }) {
+  const dialogRef = useRef(null);
+  const cancelRef = useRef(null);
+  const previouslyFocusedRef = useRef(null);
+  const cancelHandlerRef = useRef(onCancel);
+
+  useEffect(() => {
+    cancelHandlerRef.current = onCancel;
+  }, [onCancel]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    previouslyFocusedRef.current = document.activeElement;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelHandlerRef.current?.();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(dialogRef.current.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    cancelRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocusedRef.current?.focus();
+    };
+  }, [open]);
+
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget) onCancel?.();
+    }}>
+      <section ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title">
         <div className={`dialog-icon dialog-icon-${tone}`}>
           <AlertTriangle size={20} strokeWidth={2.2} />
         </div>
@@ -60,7 +106,7 @@ export function ConfirmDialog({
           <p>{message}</p>
         </div>
         <div className="dialog-actions">
-          <button type="button" className="ghost-button" onClick={onCancel}>
+          <button ref={cancelRef} type="button" className="ghost-button" onClick={onCancel}>
             {cancelLabel}
           </button>
           <button type="button" className={tone === "danger" ? "danger-button" : "primary-button"} onClick={onConfirm}>

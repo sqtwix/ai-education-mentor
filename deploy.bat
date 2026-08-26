@@ -6,50 +6,108 @@ echo DEPLOYING AI EDUCATION MENTOR - IOT AGENT (WINDOWS)
 cd /d "%~dp0"
 
 if not exist ".env" (
-    if exist "env_example.txt" (
-        echo --> Creating .env from env_example.txt...
-        copy env_example.txt .env >nul
-    ) else (
-        echo --> Creating default .env file...
-        (
-            echo DB_HOST=postgres
-            echo DB_PORT=5432
-            echo DB_NAME=aichecker
-            echo DB_USER=aichecker_user
-            echo DB_PASSWORD=aichecker_password
-            echo JWT_SECRET=super_secret_jwt_key_aichecker_enterprise_2026!
-            echo JWT_ISSUER=ai-education-mentor
-            echo JWT_AUDIENCE=ai-education-mentor-frontend
-            echo JWT_EXPIRY_MINUTES=1440
-            echo DEEPSEEK_API_KEY=
-            echo SBERGPT_API_KEY=
-            echo VITE_OFFLINE_MODE=false
-        ) > .env
-    )
+    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\init_env.ps1"
+    if errorlevel 1 exit /b 1
 ) else (
     echo --> Existing .env file found.
 )
 
 if not exist "models" mkdir models
 
-set "MODEL_FILE=qwen2.5-0.5b-instruct-q8_0.gguf"
+for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if "%%A"=="DB_PASSWORD" set "DB_PASSWORD=%%B"
+    if "%%A"=="JWT_SECRET" set "JWT_SECRET=%%B"
+    if "%%A"=="QWEN_MODEL_FILE" set "QWEN_MODEL_FILE=%%B"
+    if "%%A"=="QWEN_MODEL_URL" set "QWEN_MODEL_URL=%%B"
+    if "%%A"=="QWEN_MODEL_SHA256" set "QWEN_MODEL_SHA256=%%B"
+    if "%%A"=="FRONTEND_PORT" set "FRONTEND_PORT=%%B"
+)
+
+if not defined DB_PASSWORD (
+    echo ERROR: Set a unique DB_PASSWORD in .env and rerun deploy.bat.
+    exit /b 1
+)
+if /i "!DB_PASSWORD!"=="CHANGE_ME_STRONG_DATABASE_PASSWORD" (
+    echo ERROR: Set a unique DB_PASSWORD in .env and rerun deploy.bat.
+    exit /b 1
+)
+if not defined JWT_SECRET (
+    echo ERROR: Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.bat.
+    exit /b 1
+)
+if /i "!JWT_SECRET!"=="CHANGE_ME_MINIMUM_32_RANDOM_CHARACTERS" (
+    echo ERROR: Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.bat.
+    exit /b 1
+)
+if "!JWT_SECRET:~31,1!"=="" (
+    echo ERROR: Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.bat.
+    exit /b 1
+)
+
+if not defined QWEN_MODEL_FILE set "QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf"
+if not defined QWEN_MODEL_URL set "QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+
+set "MODEL_FILE=%QWEN_MODEL_FILE%"
 set "MODEL_PATH=models\%MODEL_FILE%"
 if not exist "%MODEL_PATH%" (
-    echo --> Downloading local Qwen2.5 GGUF model (%MODEL_FILE%)...
-    powershell -Command "Invoke-WebRequest -Uri 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf' -OutFile 'models\%MODEL_FILE%'"
+    echo --> Downloading local Qwen3 GGUF model (%MODEL_FILE%)...
+    powershell -Command "Invoke-WebRequest -Uri '%QWEN_MODEL_URL%' -OutFile 'models\%MODEL_FILE%'"
     echo --> Model downloaded successfully.
 ) else (
     echo --> Local GGUF model already exists in .\models, skipping download.
 )
 
+if not defined QWEN_MODEL_SHA256 (
+    echo ERROR: QWEN_MODEL_SHA256 must contain the approved SHA256.
+    exit /b 1
+)
+if "!QWEN_MODEL_SHA256:~63,1!"=="" (
+    echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
+    exit /b 1
+)
+if not "!QWEN_MODEL_SHA256:~64,1!"=="" (
+    echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
+    exit /b 1
+)
+echo --> Verifying Qwen model SHA256...
+for /f "tokens=1" %%H in ('certutil -hashfile "%MODEL_PATH%" SHA256 ^| findstr /r "^[0-9A-Fa-f][0-9A-Fa-f]"') do set "ACTUAL_SHA=%%H"
+if /i not "!ACTUAL_SHA!"=="%QWEN_MODEL_SHA256%" (
+    echo ERROR: Qwen model checksum mismatch.
+    echo Expected: %QWEN_MODEL_SHA256%
+    echo Actual:   !ACTUAL_SHA!
+    exit /b 1
+)
+
+docker compose version >nul 2>&1
+if not errorlevel 1 (
+    set "COMPOSE=docker compose"
+) else (
+    where docker-compose >nul 2>&1
+    if errorlevel 1 (
+        echo ERROR: Docker Compose is not installed.
+        exit /b 1
+    )
+    set "COMPOSE=docker-compose"
+)
+echo --> Building production images...
+!COMPOSE! build
+if errorlevel 1 exit /b 1
+
+rem Previous releases created the DataProtection volume while API Core ran as
+rem root. Migrate only this dedicated volume before the non-root API starts.
+echo --> Preparing persistent DataProtection key permissions...
+!COMPOSE! run --rm --no-deps --user root --entrypoint /bin/sh api-core -c "mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys"
+if errorlevel 1 exit /b 1
+
 echo --> Starting Docker containers...
-docker compose down 2>nul
-docker compose up --build -d
+!COMPOSE! up --no-build -d --remove-orphans
+if errorlevel 1 exit /b 1
 
 echo ==================================================
 echo DEPLOYMENT SUCCESSFUL!
-echo Open application in browser: http://localhost/
-echo Backend Swagger API:        http://localhost:5000/swagger
+if not defined FRONTEND_PORT set "FRONTEND_PORT=80"
+echo Open application in browser: http://localhost:!FRONTEND_PORT!/
+echo Backend Swagger API:        http://127.0.0.1:5050/swagger
 echo AI-Driver FastAPI Docs:     http://localhost:8000/docs
 echo ==================================================
 pause

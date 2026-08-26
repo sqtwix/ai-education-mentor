@@ -7,6 +7,30 @@ public class CourseBatchAnalysisResult
     [JsonPropertyName("batch_id")]
     public string BatchId { get; set; } = string.Empty;
 
+    [JsonPropertyName("total_profiles_processed")]
+    public int? TotalProfilesProcessed { get; set; }
+
+    [JsonPropertyName("batch_selection_required")]
+    public bool? BatchSelectionRequired { get; set; }
+
+    [JsonPropertyName("batch_limit")]
+    public int? BatchLimit { get; set; }
+
+    [JsonPropertyName("generation_mode")]
+    public string GenerationMode { get; set; } = string.Empty;
+
+    [JsonPropertyName("quality_status")]
+    public string QualityStatus { get; set; } = string.Empty;
+
+    [JsonPropertyName("model_version")]
+    public string ModelVersion { get; set; } = string.Empty;
+
+    [JsonPropertyName("catalog_version")]
+    public string CatalogVersion { get; set; } = string.Empty;
+
+    [JsonPropertyName("generated_at")]
+    public DateTimeOffset? GeneratedAt { get; set; }
+
     [JsonPropertyName("trajectory")]
     public TrajectoryResultDto? Trajectory { get; set; }
 
@@ -16,6 +40,21 @@ public class CourseBatchAnalysisResult
 
 public class TrajectoryResultDto
 {
+    [JsonPropertyName("generation_mode")]
+    public string GenerationMode { get; set; } = string.Empty;
+
+    [JsonPropertyName("quality_status")]
+    public string QualityStatus { get; set; } = string.Empty;
+
+    [JsonPropertyName("model_version")]
+    public string ModelVersion { get; set; } = string.Empty;
+
+    [JsonPropertyName("catalog_version")]
+    public string CatalogVersion { get; set; } = string.Empty;
+
+    [JsonPropertyName("generated_at")]
+    public DateTimeOffset? GeneratedAt { get; set; }
+
     [JsonPropertyName("trajectory_id")]
     public string TrajectoryId { get; set; } = string.Empty;
 
@@ -39,6 +78,9 @@ public class TrajectoryResultDto
 
     [JsonPropertyName("colleague_benchmark")]
     public ColleagueBenchmarkDto? ColleagueBenchmark { get; set; }
+
+    [JsonPropertyName("limitations")]
+    public List<string> Limitations { get; set; } = new();
 }
 
 public class TrajectoryStageDto
@@ -68,13 +110,13 @@ public class CourseRecommendationDto
     public string CourseName { get; set; } = string.Empty;
 
     [JsonPropertyName("type")]
-    public string Type { get; set; } = "ППК";
+    public string Type { get; set; } = string.Empty;
 
     [JsonPropertyName("category")]
     public string Category { get; set; } = string.Empty;
 
     [JsonPropertyName("duration_hours")]
-    public int DurationHours { get; set; } = 16;
+    public int DurationHours { get; set; }
 
     [JsonPropertyName("competencies")]
     public List<string> Competencies { get; set; } = new();
@@ -89,10 +131,19 @@ public class CourseRecommendationDto
     public string Justification { get; set; } = string.Empty;
 
     [JsonPropertyName("priority")]
-    public string Priority { get; set; } = "High";
+    public string Priority { get; set; } = string.Empty;
 
     [JsonPropertyName("status")]
-    public string Status { get; set; } = "Рекомендован";
+    public string Status { get; set; } = string.Empty;
+
+    [JsonPropertyName("evidence_sources")]
+    public List<string> EvidenceSources { get; set; } = new();
+
+    [JsonPropertyName("cohort_evidence")]
+    public BenchmarkCourseInfoDto? CohortEvidence { get; set; }
+
+    [JsonPropertyName("limitations")]
+    public List<string> Limitations { get; set; } = new();
 }
 
 public class CompetencyRadarPointDto
@@ -101,19 +152,31 @@ public class CompetencyRadarPointDto
     public string Competency { get; set; } = string.Empty;
 
     [JsonPropertyName("current_level")]
-    public int CurrentLevel { get; set; } = 40;
+    public int CurrentLevel { get; set; }
 
     [JsonPropertyName("target_level")]
-    public int TargetLevel { get; set; } = 85;
+    public int TargetLevel { get; set; }
 
     [JsonPropertyName("growth")]
-    public int Growth { get; set; } = 45;
+    public int Growth { get; set; }
 }
 
 public class ColleagueBenchmarkDto
 {
     [JsonPropertyName("total_colleagues_in_position")]
     public int TotalColleaguesInPosition { get; set; }
+
+    [JsonPropertyName("cohort_size")]
+    public int CohortSize { get; set; }
+
+    [JsonPropertyName("scope")]
+    public string Scope { get; set; } = string.Empty;
+
+    [JsonPropertyName("cohort_note")]
+    public string CohortNote { get; set; } = string.Empty;
+
+    [JsonPropertyName("limitations")]
+    public List<string> Limitations { get; set; } = new();
 
     [JsonPropertyName("top_recommended_for_position")]
     public List<BenchmarkCourseInfoDto> TopRecommendedForPosition { get; set; } = new();
@@ -125,13 +188,13 @@ public class BenchmarkCourseInfoDto
     public string CourseName { get; set; } = string.Empty;
 
     [JsonPropertyName("type")]
-    public string Type { get; set; } = "ППК";
+    public string Type { get; set; } = string.Empty;
 
     [JsonPropertyName("popularity_pct")]
-    public double PopularityPct { get; set; }
+    public double? PopularityPct { get; set; }
 
     [JsonPropertyName("success_rate")]
-    public double SuccessRate { get; set; } = 100.0;
+    public double? SuccessRate { get; set; }
 }
 
 // Обратная совместимость для полей проекта 2
@@ -166,6 +229,12 @@ public class CourseAnalysisResultDto
 
     [JsonPropertyName("competency_radar")]
     public List<CompetencyRadarPointDto>? CompetencyRadar { get; set; }
+
+    [JsonPropertyName("limitations")]
+    public List<string>? Limitations { get; set; }
+
+    [JsonPropertyName("colleague_benchmark")]
+    public ColleagueBenchmarkDto? ColleagueBenchmark { get; set; }
 
     [JsonPropertyName("statistics")]
     public CourseStatisticsDto Statistics { get; set; } = new();

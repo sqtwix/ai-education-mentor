@@ -12,30 +12,6 @@ API_CORE_DATA = BASE_DIR / "api-core" / "ApiCore" / "ApiCore" / "Data"
 AI_DRIVER_DATA.mkdir(parents=True, exist_ok=True)
 API_CORE_DATA.mkdir(parents=True, exist_ok=True)
 
-def clean_program_title(raw_title: str) -> str:
-    t = str(raw_title).strip()
-    t = re.sub(r'^\d+[\.\)]\s*', '', t)
-    t = re.sub(r'\s+', ' ', t)
-    
-    # Исправление специфических обрывов из буклета
-    if "ГОСУДАРСТВЕННОГО УПРАВЛЕНИЯ САНКТ -ПЕТЕРБУРГА" in t.upper():
-        return "Современные стандарты государственного управления в Санкт-Петербурге"
-    if "через совершенствование" in t.lower():
-        return "Совершенствование системы государственного управления Санкт-Петербурга"
-    if "В рамках обучения" in t:
-        return "Цифровые инструменты государственного и муниципального управления Санкт-Петербурга"
-    
-    # Приведение регистра
-    if t.isupper() and len(t) > 5:
-        t = t.capitalize()
-    else:
-        t = t[0].upper() + t[1:] if len(t) > 1 else t.upper()
-        
-    # Удаление обрывков в конце
-    t = re.sub(r'[\s,\.:;–—-]+$', '', t)
-    t = re.sub(r'\s+(через|в|на|и|по|для|от|с|к|о|при)$', '', t, flags=re.IGNORECASE)
-    return t
-
 def build_catalog():
     courses = []
     seen_names = set()
@@ -57,90 +33,167 @@ def build_catalog():
                 if clean_name.lower() not in seen_names:
                     seen_names.add(clean_name.lower())
                     
-                    competencies = []
-                    text_corpus = f"{clean_name} {annot} {target} {results}".lower()
-                    if "цифр" in text_corpus or "данн" in text_corpus or "ии" in text_corpus or "информ" in text_corpus:
-                        competencies.append("Цифровая грамотность и управление данными")
-                    if "коммуник" in text_corpus or "обращен" in text_corpus or "клиент" in text_corpus:
-                        competencies.append("Клиентоцентричность и коммуникации")
-                    if "управлен" in text_corpus or "менедж" in text_corpus or "лидер" in text_corpus:
-                        competencies.append("Лидерство и регулярный менеджмент")
-                    if "право" in text_corpus or "закон" in text_corpus or "норм" in text_corpus or "коррупц" in text_corpus:
-                        competencies.append("Правовая грамотность и антикоррупционные стандарты")
-                    if "проект" in text_corpus or "процесс" in text_corpus:
-                        competencies.append("Проектное и процессное управление")
-                    if "эмоцион" in text_corpus or "стресс" in text_corpus or "тайм" in text_corpus or "эффективн" in text_corpus:
-                        competencies.append("Личная эффективность и эмоциональный интеллект")
-                    if not competencies:
-                        competencies = ["Профессиональные компетенции ГГС"]
-                        
                     courses.append({
                         "id": f"EK_{course_id_counter:03d}",
                         "name": clean_name,
                         "type": "ЭК",
                         "category": "Электронный курс",
-                        "duration_hours": 16,
+                        "duration_hours": 0,
                         "annotation": str(annot).strip(),
                         "target": str(target).strip(),
                         "results": str(results).strip(),
-                        "competencies": competencies
+                        "competencies": []
                     })
                     course_id_counter += 1
 
-    # 2. Буклет ППК 2025
+    # 2. Буклет ППК 2025. Названия, описания и часы берутся только из
+    # карточек программ на страницах 11-87. Текст введения и произвольные
+    # строки PDF не являются программами и не должны попадать в каталог.
     booklet_path = EXAMPLE_DIR / "Буклет Линейка программ на 2025 (2).pdf"
     if booklet_path.exists():
         reader = pypdf.PdfReader(booklet_path)
-        full_text = ""
-        for p in reader.pages:
-            t = p.extract_text()
-            if t:
-                full_text += "\n" + t
-                
-        lines = [line.strip() for line in full_text.splitlines() if line.strip()]
-        for line in lines:
-            if (len(line) > 18 and len(line) < 130 and 
-                not line.startswith("Стр") and not line.startswith("Линейка") and 
-                not line.startswith("2025") and not line.startswith("Корпоративный") and
-                not line.isdigit()):
-                
-                clean_title = clean_program_title(line)
-                
-                if (clean_title.lower() not in seen_names and 
-                    len(clean_title) >= 15 and
-                    any(k in clean_title.lower() for k in ["управлен", "развит", "навык", "практик", "основ", "государственн", "эффективност", "анализ", "технолог", "цифров", "лидерств", "культур", "коммуникац", "проект", "служебн", "делопроизвод", "контрол"])):
-                    
-                    seen_names.add(clean_title.lower())
-                    
-                    competencies = []
-                    t_lower = clean_title.lower()
-                    if "цифр" in t_lower or "данн" in t_lower or "ии" in t_lower or "ит" in t_lower:
-                        competencies.append("Цифровая трансформация и данные")
-                    if "клиент" in t_lower or "сервис" in t_lower or "обращен" in t_lower:
-                        competencies.append("Клиентоцентричность и взаимодействие с гражданами")
-                    if "управлен" in t_lower or "руковод" in t_lower or "лидер" in t_lower:
-                        competencies.append("Лидерство и регулярный менеджмент")
-                    if "проект" in t_lower or "процесс" in t_lower or "бережлив" in t_lower:
-                        competencies.append("Проектное и процессное управление")
-                    if "коммуник" in t_lower or "переговор" in t_lower or "конфликт" in t_lower:
-                        competencies.append("Деловые коммуникации и аргументация")
-                    if "право" in t_lower or "закон" in t_lower or "норм" in t_lower or "коррупц" in t_lower or "служебн" in t_lower:
-                        competencies.append("Правовая грамотность и стандарты ГГС")
-                    if not competencies:
-                        competencies = ["Профессиональное развитие ГГС"]
-                        
-                    courses.append({
-                        "id": f"PPK_{course_id_counter:03d}",
-                        "name": clean_title,
-                        "type": "ППК",
-                        "category": "Программа повышения квалификации",
-                        "duration_hours": 24 if "практикум" in clean_title.lower() else (36 if "интенсив" in clean_title.lower() else 16),
-                        "annotation": f"Практико-ориентированная программа повышения квалификации Корпоративного университета Санкт-Петербурга по теме: «{clean_title}».",
-                        "target": f"Развитие профессиональных и управленческих компетенций гражданских служащих в сфере: {clean_title}.",
-                        "results": f"Знать ключевые стандарты и нормативно-правовую базу; Уметь применять практические инструменты в служебной деятельности; Владеть навыками эффективного решения типовых и комплексных задач по теме «{clean_title}».",
-                        "competencies": competencies
-                    })
-                    course_id_counter += 1
+        category_ranges = [
+            (11, 21, "Личностные компетенции"),
+            (22, 30, "Инструменты управления"),
+            (31, 69, "Профильные hard-skills"),
+            (70, 76, "Профессиональные компетенции"),
+            (77, 87, "Базовые компетенции"),
+        ]
+
+        for page_number in range(11, min(87, len(reader.pages)) + 1):
+            page = reader.pages[page_number - 1]
+            title_fragments = []
+            text_fragments = []
+
+            def collect_title(text, _cm, tm, _font, font_size):
+                value = re.sub(r"\s+", " ", text).strip()
+                if not value:
+                    return
+                y_position = float(tm[5])
+                size = float(font_size)
+                text_fragments.append((value, y_position, size))
+                if 15.5 <= size <= 16.5:
+                    title_fragments.append((value, y_position))
+
+            page_text = page.extract_text(visitor_text=collect_title) or ""
+            if not title_fragments:
+                continue
+
+            title_groups = []
+            for fragment, y_position in title_fragments:
+                if y_position <= 30 and title_groups:
+                    title_groups[-1].append((fragment, y_position))
+                    continue
+                previous_positive_y = next(
+                    (y for _, y in reversed(title_groups[-1]) if y > 30),
+                    None
+                ) if title_groups else None
+                if not title_groups or previous_positive_y is None or abs(previous_positive_y - y_position) > 24:
+                    title_groups.append([])
+                title_groups[-1].append((fragment, y_position))
+
+            page_hours = []
+            for fragment_index, (fragment, y_position, font_size) in enumerate(text_fragments):
+                if not 11.5 <= font_size <= 12.5 or "час" not in fragment.lower():
+                    continue
+                inline_numbers = re.findall(r"\d+", fragment)
+                if inline_numbers and y_position > 30:
+                    page_hours.append((y_position, int(inline_numbers[-1])))
+                    continue
+
+                previous_numeric = []
+                previous_y = None
+                for previous_fragment, candidate_y, candidate_size in reversed(text_fragments[:fragment_index]):
+                    if not 11.5 <= candidate_size <= 12.5 or candidate_y <= 30:
+                        continue
+                    if not previous_fragment.isdigit():
+                        if previous_numeric:
+                            break
+                        continue
+                    if previous_y is None:
+                        previous_y = candidate_y
+                    if abs(candidate_y - previous_y) > 0.5:
+                        break
+                    previous_numeric.append(previous_fragment)
+                if previous_numeric and previous_y is not None:
+                    number_text = "".join(reversed(previous_numeric))
+                    page_hours.append((previous_y, int(number_text)))
+
+            category = next(
+                label for start, end, label in category_ranges
+                if start <= page_number <= end
+            )
+
+            for index, group in enumerate(title_groups):
+                title_lines = [fragment for fragment, _ in group]
+                official_title = " ".join(title_lines)
+                normalized_title = re.sub(r"\s+", " ", official_title).strip()
+                normalized_title = re.sub(r"САНКТ\s+-?\s*ПЕТЕРБУРГА", "САНКТ-ПЕТЕРБУРГА", normalized_title)
+                if not normalized_title or normalized_title.lower() in seen_names:
+                    continue
+
+                start = page_text.find(title_lines[0])
+                if start < 0:
+                    continue
+                body_start = start
+                for title_line in title_lines:
+                    line_position = page_text.find(title_line, body_start)
+                    if line_position < 0:
+                        break
+                    body_start = line_position + len(title_line)
+
+                body_end = len(page_text)
+                if index + 1 < len(title_groups):
+                    next_title = title_groups[index + 1][0][0]
+                    next_position = page_text.find(next_title, body_start)
+                    if next_position >= 0:
+                        body_end = next_position
+
+                block = page_text[body_start:body_end].strip()
+                hours_match = re.search(r"(\d+)\s*ак\.\s*час(?:а|ов)?", block, re.IGNORECASE)
+                key_topics_match = re.search(r"КЛЮЧЕВЫЕ\s+ТЕМЫ:", block, re.IGNORECASE)
+                annotation_end_candidates = [
+                    match.start() for match in (hours_match, key_topics_match) if match
+                ]
+                annotation_end = min(annotation_end_candidates) if annotation_end_candidates else len(block)
+
+                positive_title_y = [y for _, y in group if y > 30]
+                if not positive_title_y:
+                    continue
+                upper_y = min(positive_title_y)
+                lower_title_edges = []
+                for other_group in title_groups:
+                    other_positive_y = [y for _, y in other_group if y > 30]
+                    if other_positive_y and max(other_positive_y) < upper_y:
+                        lower_title_edges.append(max(other_positive_y))
+                lower_y = max(lower_title_edges, default=0)
+                duration_candidates = [
+                    (y, hours) for y, hours in page_hours if lower_y < y < upper_y
+                ]
+                if hours_match:
+                    duration_hours = int(hours_match.group(1))
+                elif duration_candidates:
+                    _, duration_hours = max(duration_candidates, key=lambda item: item[0])
+                else:
+                    continue
+
+                annotation = re.sub(r"\s+", " ", block[:annotation_end]).strip()
+                if not annotation:
+                    continue
+
+                seen_names.add(normalized_title.lower())
+                courses.append({
+                    "id": f"PPK_{course_id_counter:03d}",
+                    "name": normalized_title,
+                    "type": "ППК",
+                    "category": category,
+                    "duration_hours": duration_hours,
+                    "annotation": annotation,
+                    "target": "",
+                    "results": "",
+                    "competencies": [category]
+                })
+                course_id_counter += 1
 
     return courses
 
@@ -165,18 +218,18 @@ def build_history_and_benchmarks():
                 total_records += 1
                 fio_str = str(fio).strip()
                 pos_str = str(pos).strip()
-                dept_str = str(dept).strip() if dept else "ИОГВ Санкт-Петербурга"
-                c_type_str = str(c_type).strip() if c_type else "ППК"
-                c_name_str = clean_program_title(str(c_name).strip())
-                status_str = str(status).strip() if status else "Пройден"
+                dept_str = str(dept).strip() if dept else ""
+                c_type_str = str(c_type).strip() if c_type else ""
+                c_name_str = str(c_name).strip()
+                status_str = str(status).strip()
                 
                 if fio_str not in users_dict:
                     users_dict[fio_str] = {
                         "fio": fio_str,
                         "position": pos_str,
                         "department": dept_str,
-                        "experience_years": 3,
-                        "career_goal": f"Повышение профессионального мастерства и эффективности для должности «{pos_str}»",
+                        "experience_years": 0,
+                        "career_goal": "",
                         "learning_history": []
                     }
                 
@@ -212,11 +265,11 @@ def build_history_and_benchmarks():
             passed = data["course_passed"].get(cname, 0)
             c_bench[cname] = {
                 "course_name": cname,
-                "course_type": data["course_types"].get(cname, "ППК"),
+                "course_type": data["course_types"].get(cname, ""),
                 "total_taken": count,
                 "total_passed": passed,
                 "popularity_pct": round((count / tot) * 100, 1) if tot > 0 else 0,
-                "success_rate": round((passed / count) * 100, 1) if count > 0 else 100.0
+                "success_rate": round((passed / count) * 100, 1) if count > 0 else None
             }
         benchmarks_by_pos[p] = {
             "position": p,
@@ -257,11 +310,11 @@ def build_history_and_benchmarks():
             passed = data["course_passed"].get(cname, 0)
             c_bench[cname] = {
                 "course_name": cname,
-                "course_type": data["course_types"].get(cname, "ППК"),
+                "course_type": data["course_types"].get(cname, ""),
                 "total_taken": count,
                 "total_passed": passed,
                 "popularity_pct": round((count / tot) * 100, 1) if tot > 0 else 0,
-                "success_rate": round((passed / count) * 100, 1) if count > 0 else 100.0
+                "success_rate": round((passed / count) * 100, 1) if count > 0 else None
             }
         benchmarks_by_pos_dept[pair_key] = {
             "position": data["position"],

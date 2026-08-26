@@ -25,4 +25,9 @@ public class User
 
     [Column("settings_json")]
     public string? SettingsJson { get; set; }
+
+    [Required]
+    [MaxLength(20)]
+    [Column("role")]
+    public string Role { get; set; } = "Employee";
 }

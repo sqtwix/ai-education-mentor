@@ -1,6 +1,8 @@
 # 1. Этап сборки приложения
 FROM node:20-alpine AS build
 WORKDIR /app
+ARG VITE_OFFLINE_MODE=false
+ENV VITE_OFFLINE_MODE=${VITE_OFFLINE_MODE}
 
 # Кэшируем зависимости для ускорения повторных сборок
 COPY package*.json ./

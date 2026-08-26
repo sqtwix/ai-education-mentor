@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+bin/
+obj/
+
+node_modules/
+dist/
+.pnpm-store/
+
+.env
+frontend/.env
+models/
+temp_uploads/
+.tmp/

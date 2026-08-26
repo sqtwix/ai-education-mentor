@@ -1,101 +1,178 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
-  UserCheck, Plus, Trash2, ChevronDown, 
-  Cpu, Building, Briefcase, Target, Shield, ArrowRight, RefreshCw,
-  UploadCloud, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Sparkles, Layers
+  UserCheck, Plus, Trash2,
+  Cpu, Shield, RefreshCw,
+  UploadCloud, FileSpreadsheet, AlertCircle, Sparkles
 } from "lucide-react";
-import { getHistoryUsers, getCoursesCatalog, generateTrajectory, uploadFiles } from "../api";
+import { getCurrentUser, getHistoryUsers, getCoursesCatalog, getBenchmarks, getModelAvailability, generateTrajectory, uploadFiles, isAuthExpiredError } from "../api";
+import { UnifiedDropdown } from "./UnifiedDropdown";
 
-export function TrajectoryConstructor({ onTrajectoryCreated }) {
+const getDraftKey = () => `iot:trajectory-draft:${localStorage.getItem("userEmail") || "current"}`;
+const MAX_UPLOAD_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024;
+const MAX_UPLOAD_FILE_COUNT = 20;
+const ALLOWED_UPLOAD_EXTENSIONS = new Set(["json", "xlsx", "xls", "csv", "zip"]);
+
+const readTrajectoryDraft = () => {
+  try {
+    return JSON.parse(sessionStorage.getItem(getDraftKey()) || "null");
+  } catch {
+    return null;
+  }
+};
+
+export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
+  const [initialDraft] = useState(readTrajectoryDraft);
   const [usersList, setUsersList] = useState([]);
   const [catalogList, setCatalogList] = useState([]);
-  const [activeTab, setActiveTab] = useState("existing"); // "existing" | "custom" | "files"
+  const [positionsList, setPositionsList] = useState([]);
+  const [departmentsList, setDepartmentsList] = useState([]);
+  const [activeTab, setActiveTab] = useState("custom"); // "existing" | "custom" | "files"
   const [selectedUserIndex, setSelectedUserIndex] = useState(0);
+  const [canAccessRegistry, setCanAccessRegistry] = useState(false);
 
   // Profile fields
-  const [fio, setFio] = useState("Иванов Алексей Петрович");
-  const [position, setPosition] = useState("Главный специалист");
-  const [department, setDepartment] = useState("Администрация Губернатора Санкт-Петербурга");
-  const [experienceYears, setExperienceYears] = useState(3);
-  const [careerGoal, setCareerGoal] = useState("Развитие управленческих и цифровых компетенций в сфере госуправления");
-  const [learningHistory, setLearningHistory] = useState([]);
+  const [fio, setFio] = useState(() => initialDraft?.fio || "");
+  const [position, setPosition] = useState(() => initialDraft?.position || "");
+  const [department, setDepartment] = useState(() => initialDraft?.department || "");
+  const [experienceYears, setExperienceYears] = useState(() => Number(initialDraft?.experienceYears) || 0);
+  const [careerGoal, setCareerGoal] = useState(() => initialDraft?.careerGoal || "");
+  const [learningHistory, setLearningHistory] = useState(() => (
+    Array.isArray(initialDraft?.learningHistory) ? initialDraft.learningHistory : []
+  ));
 
   // New course in history inputs
   const [newCourseName, setNewCourseName] = useState("");
-  const [newCourseType, setNewCourseType] = useState("ППК");
-  const [newCourseStatus, setNewCourseStatus] = useState("Пройден");
+  const [newCourseType, setNewCourseType] = useState("");
+  const [newCourseStatus, setNewCourseStatus] = useState("");
 
   // File upload state
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const fileInputRef = useRef(null);
+  const submissionRequestIdRef = useRef("");
 
   // Model selection
-  const [selectedModel, setSelectedModel] = useState("deepseek");
+  const [selectedModel, setSelectedModel] = useState("");
+  const [modelAvailability, setModelAvailability] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationStep, setGenerationStep] = useState(0);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [initialLoadError, setInitialLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const POSITIONS = [
-    "Главный специалист",
-    "Ведущий специалист",
-    "Начальник отдела",
-    "Главный специалист-юрисконсульт",
-    "Заместитель начальника отдела",
-    "Заместитель главы Администрации",
-    "Начальник Управления - главный бухгалтер Администрации Губернатора",
-    "Заместитель начальника Управления-начальник отдела",
-    "Начальник сектора",
-    "Главный специалист Комитета",
-    "Ведущий специалист - юрисконсульт",
-    "Специалист 1-й категории",
-    "Консультант",
-    "Советник"
-  ];
+  const clearDraft = () => {
+    sessionStorage.removeItem(getDraftKey());
+  };
 
-  const DEPARTMENTS = [
-    "Администрация Губернатора Санкт-Петербурга",
-    "Комитет по информатизации и связи",
-    "Комитет по экономической политике и стратегическому планированию",
-    "Комитет по государственному контролю, использованию и охране памятников истории и культуры",
-    "Комитет по социальной политике Санкт-Петербурга",
-    "Администрация Центрального района",
-    "Администрация Приморского района",
-    "Администрация Адмиралтейского района",
-    "Государственная жилищная инспекция Санкт-Петербурга",
-    "Комитет по промышленной политике, инновациям и торговле"
-  ];
+  const getSubmissionRequestId = () => {
+    if (!submissionRequestIdRef.current) {
+      submissionRequestIdRef.current = globalThis.crypto?.randomUUID?.()
+        || `iot-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+    return submissionRequestIdRef.current;
+  };
+
+  useEffect(() => {
+    submissionRequestIdRef.current = "";
+  }, [activeTab, careerGoal, department, fio, learningHistory, position, selectedModel, uploadedFiles]);
+
+  useEffect(() => {
+    const hasRestoredDraft = Boolean(
+      initialDraft?.fio
+      || initialDraft?.position
+      || initialDraft?.department
+      || initialDraft?.careerGoal
+      || initialDraft?.learningHistory?.length
+    );
+    if (hasRestoredDraft) {
+      notify?.({
+        type: "info",
+        title: "Черновик восстановлен",
+        message: "Поля профиля восстановлены после обновления страницы.",
+      });
+    }
+  }, [initialDraft, notify]);
+
+  useEffect(() => {
+    const hasDraftData = Boolean(
+      fio.trim()
+      || position.trim()
+      || department.trim()
+      || careerGoal.trim()
+      || learningHistory.length
+    );
+    if (!hasDraftData) {
+      clearDraft();
+      return;
+    }
+
+    sessionStorage.setItem(getDraftKey(), JSON.stringify({
+      version: 1,
+      activeTab: "custom",
+      fio,
+      position,
+      department,
+      experienceYears,
+      careerGoal,
+      learningHistory,
+      savedAt: new Date().toISOString(),
+    }));
+  }, [activeTab, careerGoal, department, experienceYears, fio, learningHistory, position]);
+
+  const selectUser = (user) => {
+    setFio(user.fio || "");
+    setPosition(user.position || "");
+    setDepartment(user.department || "");
+    setExperienceYears(user.experience_years ?? 0);
+    setCareerGoal(user.career_goal || "");
+    setLearningHistory(user.learning_history || []);
+  };
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [users, catalog] = await Promise.all([
-          getHistoryUsers(),
-          getCoursesCatalog()
+        setInitialLoadError("");
+        const [session, catalog, benchmarks, availability] = await Promise.all([
+          getCurrentUser(),
+          getCoursesCatalog(),
+          getBenchmarks({ force: reloadKey > 0 }),
+          getModelAvailability().catch(() => ({ models: [] })),
         ]);
-        setUsersList(users || []);
         setCatalogList(catalog || []);
+        setPositionsList(Object.keys(benchmarks?.benchmarks_by_position || {}));
+        setDepartmentsList(Array.from(new Set(
+          Object.values(benchmarks?.benchmarks_by_position_and_dept || {})
+            .map((item) => item?.department)
+            .filter(Boolean)
+        )).sort((left, right) => left.localeCompare(right, "ru")));
+        const models = availability?.models || [];
+        setModelAvailability(models);
+        setSelectedModel(models.find((model) => model.configured)?.id || "");
 
-        if (users && users.length > 0) {
-          selectUser(users[0]);
+        const registryAllowed = session?.role === "Admin";
+        setCanAccessRegistry(registryAllowed);
+        if (registryAllowed) {
+          const users = await getHistoryUsers();
+          setUsersList(users || []);
+        }
+        if (reloadKey > 0) {
+          notify?.({ type: "success", title: "Данные конструктора обновлены" });
         }
       } catch (err) {
+        if (isAuthExpiredError(err)) return;
         console.error("Failed to load initial data:", err);
+        const message = err.message || "Не удалось загрузить каталог, справочники или сведения о моделях.";
+        setInitialLoadError(message);
+        notify?.({
+          type: "error",
+          title: "Конструктор загрузился не полностью",
+          message,
+        });
       }
     }
     loadData();
-  }, []);
+  }, [notify, reloadKey]);
 
-  const selectUser = (user) => {
-    setFio(user.fio || "Служащий");
-    setPosition(user.position || "Главный специалист");
-    setDepartment(user.department || "Администрация Губернатора Санкт-Петербурга");
-    setExperienceYears(user.experience_years || 3);
-    setCareerGoal(user.career_goal || "Повышение эффективности служебной деятельности");
-    setLearningHistory(user.learning_history || []);
-  };
-
-  const handleUserSelectChange = (e) => {
-    const idx = parseInt(e.target.value, 10);
+  const handleUserSelectChange = (value) => {
+    const idx = parseInt(value, 10);
     setSelectedUserIndex(idx);
     if (usersList[idx]) {
       selectUser(usersList[idx]);
@@ -103,7 +180,14 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
   };
 
   const handleAddHistoryItem = () => {
-    if (!newCourseName.trim()) return;
+    if (!newCourseName.trim() || !newCourseType || !newCourseStatus) {
+      notify?.({
+        type: "warning",
+        title: "Заполните данные программы",
+        message: "Укажите название, тип и статус обучения.",
+      });
+      return;
+    }
     setLearningHistory([
       ...learningHistory,
       {
@@ -119,34 +203,65 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
     setLearningHistory(learningHistory.filter((_, i) => i !== index));
   };
 
+  const acceptUploadedFiles = (fileList) => {
+    const files = Array.from(fileList || []);
+    const invalidExtension = files.find((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase() || "";
+      return !ALLOWED_UPLOAD_EXTENSIONS.has(extension);
+    });
+    const oversizedFile = files.find((file) => file.size > MAX_UPLOAD_FILE_BYTES);
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+
+    let message = "";
+    if (files.length > MAX_UPLOAD_FILE_COUNT) message = `Можно выбрать не более ${MAX_UPLOAD_FILE_COUNT} файлов.`;
+    else if (invalidExtension) message = `Формат файла «${invalidExtension.name}» не поддерживается.`;
+    else if (files.some((file) => file.size === 0)) message = "Пустые файлы не допускаются.";
+    else if (oversizedFile) message = `Файл «${oversizedFile.name}» превышает 25 МБ.`;
+    else if (totalBytes > MAX_UPLOAD_TOTAL_BYTES) message = "Общий размер выбранных файлов превышает 50 МБ.";
+
+    if (message) {
+      notify?.({ type: "warning", title: "Файлы не выбраны", message });
+      return;
+    }
+    setUploadedFiles(files);
+  };
+
   const handleFileDrop = (e) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setUploadedFiles(Array.from(e.dataTransfer.files));
+      acceptUploadedFiles(e.dataTransfer.files);
     }
   };
 
   const handleFileSelect = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      setUploadedFiles(Array.from(e.target.files));
+      acceptUploadedFiles(e.target.files);
     }
+    e.target.value = "";
   };
 
   const handleGenerate = async () => {
     setIsGenerating(true);
-    setErrorMessage("");
-    setGenerationStep(1);
 
     try {
-      if (activeTab === "files" && uploadedFiles.length > 0) {
-        // Загрузка через файлы
-        setGenerationStep(1);
-        const res = await uploadFiles(uploadedFiles, selectedModel);
-        setGenerationStep(3);
-        if (onTrajectoryCreated) {
-          onTrajectoryCreated(res.task_id || res.id || "batch_upload");
+      if (!selectedModel) {
+        throw new Error("Нет настроенной модели ИИ. Добавьте ключ облачного провайдера или запустите локальную модель.");
+      }
+      if (activeTab === "files") {
+        if (uploadedFiles.length === 0) {
+          throw new Error("Выберите хотя бы один файл с данными профиля или истории обучения.");
         }
+        // Загрузка через файлы
+        const res = await uploadFiles(uploadedFiles, selectedModel, getSubmissionRequestId());
+        const taskId = res.task_id || res.id;
+        if (!taskId) throw new Error("Backend API не вернул идентификатор задачи.");
+        clearDraft();
+        submissionRequestIdRef.current = "";
+        if (onTrajectoryCreated) onTrajectoryCreated(taskId);
       } else {
+        if (!fio.trim() || !position.trim() || !department.trim() || !careerGoal.trim()) {
+          throw new Error("Заполните ФИО, должность, ИОГВ и цель обучения.");
+        }
         // Генерация через профиль
         const employeeProfile = {
           fio,
@@ -157,106 +272,112 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
           learning_history: learningHistory
         };
 
-        const timer1 = setTimeout(() => setGenerationStep(2), 1200);
-        const timer2 = setTimeout(() => setGenerationStep(3), 2400);
+        const res = await generateTrajectory(employeeProfile, selectedModel, getSubmissionRequestId());
 
-        const res = await generateTrajectory(employeeProfile, selectedModel);
-
-        clearTimeout(timer1);
-        clearTimeout(timer2);
-
-        if (onTrajectoryCreated) {
-          onTrajectoryCreated(res.task_id || "direct_gen");
-        }
+        if (!res.task_id) throw new Error("Backend API не вернул идентификатор задачи.");
+        clearDraft();
+        submissionRequestIdRef.current = "";
+        if (onTrajectoryCreated) onTrajectoryCreated(res.task_id);
       }
     } catch (err) {
       console.error("Generation failed:", err);
-      setErrorMessage(err.message || "Ошибка при формировании траектории");
+      const message = err.message || "Ошибка при формировании траектории";
+      notify?.({
+        type: "error",
+        title: "Не удалось запустить формирование ИОТ",
+        message,
+      });
     } finally {
       setIsGenerating(false);
-      setGenerationStep(0);
     }
   };
 
+  const modelInfo = (id) => modelAvailability.find((model) => model.id === id);
+
   return (
     <div className="constructor-shell">
-      {/* 1. Верхний баннер Hero Panel */}
       <section className="hero-panel">
         <div>
-          <p className="eyebrow">ИНДИВИДУАЛЬНАЯ ОБРАЗОВАТЕЛЬНАЯ ТРАЕКТОРИЯ (ИОТ)</p>
-          <h2>Конструктор индивидуальной траектории обучения</h2>
+          <p className="eyebrow">Индивидуальная траектория обучения</p>
+          <h2>Создать индивидуальную траекторию</h2>
           <p className="muted">
-            Мультиагентный конвейер анализирует профиль служащего, задачи ведомства и историю обучения, 
-            формируя доказательный маршрут развития из аккредитованных программ 2025 года.
+            Укажите данные сотрудника, выберите доступную модель и получите маршрут по программам каталога 2025 года.
           </p>
-        </div>
-        <div className="hero-metrics">
-          <div>
-            <strong>221 программа</strong>
-            <span>в каталоге 2025 года (ППК и ЭК)</span>
-          </div>
-          <div>
-            <strong>1 314 записей</strong>
-            <span>в реестре истории обучения ГГС</span>
-          </div>
-          <div>
-            <strong>36 должностей</strong>
-            <span>с когортными бенчмарками</span>
-          </div>
         </div>
       </section>
 
-      {/* 2. Сетка из 2 панелей (Слева форма/файлы, Справа выбор ИИ и запуск) */}
+      {initialLoadError && (
+        <div className="state-panel state-panel-compact state-panel-danger constructor-load-error" role="alert">
+          <span className="state-icon state-icon-danger"><AlertCircle size={24} /></span>
+          <div>
+            <h3>Не все данные загрузились</h3>
+            <p className="muted">{initialLoadError}</p>
+          </div>
+          <button className="secondary-button" type="button" onClick={() => setReloadKey((key) => key + 1)}>
+            <RefreshCw size={16} /> Повторить
+          </button>
+        </div>
+      )}
+
       <div className="constructor-grid">
-        {/* ЛЕВАЯ ПАНЕЛЬ: Профиль служащего или Загрузка файлов */}
         <div className="panel constructor-panel">
-          <p className="eyebrow">ПАРАМЕТРЫ ПРОФИЛЯ СЛУЖАЩЕГО</p>
+          <div className="constructor-section-heading">
+            <span className="step-number" aria-hidden="true">1</span>
+            <div>
+              <h3>Источник данных</h3>
+              <p className="muted">Выберите способ подготовки профиля.</p>
+            </div>
+          </div>
 
           {/* Переключатель вкладок режима */}
           <div className="mode-segmented-tabs">
-            <button 
-              type="button"
-              className={`mode-tab-btn ${activeTab === "existing" ? "active" : ""}`}
-              onClick={() => {
-                setActiveTab("existing");
-                if (usersList[selectedUserIndex]) selectUser(usersList[selectedUserIndex]);
-              }}
-            >
-              <UserCheck size={16} /> Реестр служащих ({usersList.length || 323})
-            </button>
+            {canAccessRegistry && (
+              <button
+                type="button"
+                className={`mode-tab-btn ${activeTab === "existing" ? "active" : ""}`}
+                aria-pressed={activeTab === "existing"}
+                onClick={() => {
+                  setActiveTab("existing");
+                  if (usersList[selectedUserIndex]) selectUser(usersList[selectedUserIndex]);
+                }}
+              >
+                <UserCheck size={16} /> Из базы
+              </button>
+            )}
             <button 
               type="button"
               className={`mode-tab-btn ${activeTab === "custom" ? "active" : ""}`}
+              aria-pressed={activeTab === "custom"}
               onClick={() => setActiveTab("custom")}
             >
-              <Plus size={16} /> Новый профиль ГГС
+              <Plus size={16} /> Новый профиль
             </button>
             <button 
               type="button"
               className={`mode-tab-btn ${activeTab === "files" ? "active" : ""}`}
+              aria-pressed={activeTab === "files"}
               onClick={() => setActiveTab("files")}
             >
-              <UploadCloud size={16} /> Загрузить файл (.xlsx/.json)
+              <UploadCloud size={16} /> Файл
             </button>
           </div>
 
           {/* ВКЛАДКА 1: Выбор из реестра 323 служащих */}
           {activeTab === "existing" && (
             <div className="form-group">
-              <label className="form-label">
-                <UserCheck size={16} /> Выберите сотрудника из базы Корпоративного университета:
+              <label className="form-label" htmlFor="trajectory-registry-user">
+                <UserCheck size={16} /> Сотрудник
               </label>
-              <select 
-                className="form-select"
-                value={selectedUserIndex}
+              <UnifiedDropdown
+                id="trajectory-registry-user"
+                value={String(selectedUserIndex)}
                 onChange={handleUserSelectChange}
-              >
-                {usersList.map((u, idx) => (
-                  <option key={idx} value={idx}>
-                    {u.fio} — {u.position} ({u.department}) [{u.learning_history?.length || 0} курсов]
-                  </option>
-                ))}
-              </select>
+                options={usersList.map((u, idx) => ({
+                  value: String(idx),
+                  label: `${u.fio} — ${u.position} (${u.department}) [${u.learning_history?.length || 0} курсов]`,
+                }))}
+                ariaLabel="Сотрудник"
+              />
             </div>
           )}
 
@@ -265,54 +386,56 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
             <>
               <div className="profile-form-grid">
                 <div className="form-group">
-                  <label className="form-label">ФИО сотрудника:</label>
+                  <label className="form-label" htmlFor="trajectory-fio">ФИО сотрудника</label>
                   <input 
+                    id="trajectory-fio"
                     type="text" 
                     className="form-input" 
                     value={fio} 
                     onChange={(e) => setFio(e.target.value)} 
                     placeholder="Например: Иванов Алексей Петрович"
+                    required
                   />
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Должность ГГС:</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={position} 
-                    onChange={(e) => setPosition(e.target.value)} 
-                    list="positions-datalist"
+                  <label className="form-label" htmlFor="trajectory-position">Должность</label>
+                  <UnifiedDropdown
+                    id="trajectory-position"
+                    value={position}
+                    onChange={setPosition}
+                    options={positionsList}
                     placeholder="Выберите или введите должность"
+                    ariaLabel="Должность"
+                    editable
+                    required
                   />
-                  <datalist id="positions-datalist">
-                    {POSITIONS.map((p, idx) => <option key={idx} value={p} />)}
-                  </datalist>
                 </div>
 
                 <div className="form-group full-width">
-                  <label className="form-label">Исполнительный орган государственной власти (ИОГВ):</label>
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    value={department} 
-                    onChange={(e) => setDepartment(e.target.value)} 
-                    list="dept-datalist"
+                  <label className="form-label" htmlFor="trajectory-department">Ведомство (ИОГВ)</label>
+                  <UnifiedDropdown
+                    id="trajectory-department"
+                    value={department}
+                    onChange={setDepartment}
+                    options={departmentsList}
                     placeholder="Ведомство Санкт-Петербурга"
+                    ariaLabel="Ведомство (ИОГВ)"
+                    editable
+                    required
                   />
-                  <datalist id="dept-datalist">
-                    {DEPARTMENTS.map((d, idx) => <option key={idx} value={d} />)}
-                  </datalist>
                 </div>
 
                 <div className="form-group full-width">
-                  <label className="form-label">Целевой вектор развития / Цели обучения:</label>
+                  <label className="form-label" htmlFor="trajectory-goal">Цель обучения</label>
                   <input 
+                    id="trajectory-goal"
                     type="text" 
                     className="form-input" 
                     value={careerGoal} 
                     onChange={(e) => setCareerGoal(e.target.value)} 
-                    placeholder="Например: Развитие проектных навыков, клиентоцентричности и работы с цифровыми данными"
+                    placeholder="Укажите фактическую цель обучения сотрудника"
+                    required
                   />
                 </div>
               </div>
@@ -320,8 +443,11 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
               {/* Блок истории обучения */}
               <div className="history-container-box">
                 <div className="history-header-row">
-                  <h4>История освоенных программ (исключаются из рекомендаций):</h4>
-                  <span className="badge">{learningHistory.length} программ</span>
+                  <div>
+                    <h4>Пройденные программы</h4>
+                    <p className="muted">Они не попадут в рекомендации.</p>
+                  </div>
+                  <span className="history-count">{learningHistory.length}</span>
                 </div>
 
                 <div className="history-chips-wrap">
@@ -333,9 +459,9 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
                         key={idx} 
                         className={`history-course-chip ${isPassed ? "is-passed" : isFailed ? "is-failed" : "is-progress"}`}
                       >
-                        <span className="chip-tag-type">{item.course_type || "ППК"}</span>
+                        <span className="chip-tag-type">{item.course_type || "Тип не указан"}</span>
                         <span className="chip-course-title" title={item.course_name}>{item.course_name}</span>
-                        <span className="chip-status-text">({item.status || "Пройден"})</span>
+                        <span className="chip-status-text">({item.status || "Статус не указан"})</span>
                         <button 
                           type="button" 
                           className="chip-del-btn"
@@ -348,47 +474,42 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
                     );
                   })}
                   {learningHistory.length === 0 && (
-                    <p className="muted text-sm" style={{ margin: "4px 0" }}>
-                      История обучения пуста (служащий еще не проходил программы в КУ СПб).
-                    </p>
+                    <div className="history-empty-copy">
+                      <strong>Пройденные программы пока не добавлены</strong>
+                      <p className="muted text-sm">Добавьте их вручную ниже — такие программы не попадут в рекомендации.</p>
+                    </div>
                   )}
                 </div>
 
-                {/* Строка добавления курса */}
-                <div className="history-add-bar">
-                  <input 
-                    type="text" 
-                    className="form-input" 
-                    style={{ flex: 1, minWidth: "180px" }}
+                <details className="history-add-details">
+                  <summary>Добавить программу вручную</summary>
+                  <div className="history-add-bar">
+                  <UnifiedDropdown
+                    id="history-course-name"
+                    className="history-course-dropdown"
                     value={newCourseName}
-                    onChange={(e) => setNewCourseName(e.target.value)}
+                    onChange={setNewCourseName}
+                    options={catalogList.map((course) => course.name)}
                     placeholder="Добавить курс в историю..."
-                    list="catalog-datalist"
+                    ariaLabel="Название программы"
+                    editable
                   />
-                  <datalist id="catalog-datalist">
-                    {catalogList.map((c, idx) => <option key={idx} value={c.name} />)}
-                  </datalist>
 
-                  <select 
-                    className="form-select" 
-                    style={{ width: "90px" }}
+                  <UnifiedDropdown
                     value={newCourseType}
-                    onChange={(e) => setNewCourseType(e.target.value)}
-                  >
-                    <option value="ППК">ППК</option>
-                    <option value="ЭК">ЭК</option>
-                  </select>
+                    onChange={setNewCourseType}
+                    options={["ППК", "ЭК"]}
+                    placeholder="Тип"
+                    ariaLabel="Тип программы"
+                  />
 
-                  <select 
-                    className="form-select" 
-                    style={{ width: "130px" }}
+                  <UnifiedDropdown
                     value={newCourseStatus}
-                    onChange={(e) => setNewCourseStatus(e.target.value)}
-                  >
-                    <option value="Пройден">Пройден</option>
-                    <option value="Не пройден">Не пройден</option>
-                    <option value="В процессе">В процессе</option>
-                  </select>
+                    onChange={setNewCourseStatus}
+                    options={["Пройден", "Не пройден", "В процессе"]}
+                    placeholder="Статус"
+                    ariaLabel="Статус программы"
+                  />
 
                   <button 
                     type="button" 
@@ -397,7 +518,8 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
                   >
                     <Plus size={15} /> Добавить
                   </button>
-                </div>
+                  </div>
+                </details>
               </div>
             </>
           )}
@@ -410,6 +532,15 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={handleFileDrop}
                 onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label="Выбрать файлы для анализа"
                 style={{ cursor: "pointer" }}
               >
                 <input 
@@ -421,11 +552,11 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
                   style={{ display: "none" }} 
                 />
                 <UploadCloud size={40} strokeWidth={1.8} style={{ color: "var(--accent)" }} />
-                <strong>Перетащите файлы сюда или нажмите для выбора</strong>
+                <strong>Перетащите файлы или выберите на устройстве</strong>
                 <p className="muted">
-                  Поддерживаются выгрузки истории обучения (.xlsx, .csv), профили (.json) и архивы (.zip)
+                  Поддерживаются выгрузки истории обучения (.xlsx, .xls, .csv), профили (.json) и архивы (.zip)
                 </p>
-                <span className="badge">Excel, CSV, JSON, ZIP</span>
+                <span className="file-formats">XLSX, XLS, CSV, JSON или ZIP · до 25 МБ на файл, до 50 МБ всего</span>
               </div>
 
               {uploadedFiles.length > 0 && (
@@ -441,9 +572,10 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
                       <button 
                         type="button" 
                         className="chip-del-btn"
+                        aria-label={`Удалить файл ${file.name}`}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setUploadedFiles(uploadedFiles.filter((_, i) => i !== idx));
+                          setUploadedFiles((currentFiles) => currentFiles.filter((_, i) => i !== idx));
                         }}
                       >
                         <Trash2 size={14} />
@@ -456,86 +588,111 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
           )}
         </div>
 
-        {/* ПРАВАЯ ПАНЕЛЬ: Выбор модели ИИ и запуск генерации */}
         <div className="panel constructor-panel">
-          <div>
-            <p className="eyebrow">ПАРАМЕТРЫ ИИ-ГЕНЕРАЦИИ</p>
-            <h3>Выбор группы ИИ-агентов</h3>
-            <p className="muted">Выберите нейросетевую модель для конвейера:</p>
+          <div className="constructor-section-heading">
+            <span className="step-number" aria-hidden="true">2</span>
+            <div>
+              <h3>Модель анализа</h3>
+              <p className="muted">Можно выбрать только настроенную модель.</p>
+            </div>
           </div>
 
           {/* Список карточек моделей */}
           <div className="model-choice-list">
-            <div 
+            <button
+              type="button"
               className={`model-choice-card ${selectedModel === "deepseek" ? "selected" : ""}`}
+              aria-pressed={selectedModel === "deepseek"}
               onClick={() => setSelectedModel("deepseek")}
+              disabled={!modelInfo("deepseek")?.configured}
             >
               <div className="model-card-top">
                 <span className="model-card-name">
-                  <Sparkles size={17} style={{ color: "var(--accent)" }} /> DeepSeek V3 / R1
+                  <Sparkles size={17} style={{ color: "var(--accent)" }} /> DeepSeek
                 </span>
-                <span className="badge">Зарубежная</span>
+                <span className="model-kind">Зарубежная</span>
               </div>
               <span className="model-card-desc">
-                Облачный API • Наивысшая точность структурирования и детализации учебных результатов (ZUV).
+                {modelInfo("deepseek")?.configured
+                  ? `Настроена модель: ${modelInfo("deepseek").model}.`
+                  : "Не настроена: отсутствует ключ DeepSeek API."}
               </span>
-            </div>
+            </button>
 
-            <div 
+            <button
+              type="button"
               className={`model-choice-card ${selectedModel === "sbergpt" ? "selected" : ""}`}
+              aria-pressed={selectedModel === "sbergpt"}
               onClick={() => setSelectedModel("sbergpt")}
+              disabled={!modelInfo("sbergpt")?.configured}
             >
               <div className="model-card-top">
                 <span className="model-card-name">
                   <Shield size={17} style={{ color: "var(--accent-2)" }} /> Sber GigaChat Pro
                 </span>
-                <span className="badge">Отечественная</span>
+                <span className="model-kind">Отечественная</span>
               </div>
               <span className="model-card-desc">
-                Российский Cloud API • Полное соответствие стандартам госслужбы РФ и импортозамещению.
+                {modelInfo("sbergpt")?.configured
+                  ? `Настроена модель: ${modelInfo("sbergpt").model}.`
+                  : "Не настроена: отсутствует ключ Sber GigaChat."}
               </span>
-            </div>
+            </button>
 
-            <div 
+            <button
+              type="button"
               className={`model-choice-card ${selectedModel === "qwen_local" ? "selected" : ""}`}
+              aria-pressed={selectedModel === "qwen_local"}
               onClick={() => setSelectedModel("qwen_local")}
+              disabled={!modelInfo("qwen_local")?.configured}
             >
               <div className="model-card-top">
                 <span className="model-card-name">
-                  <Cpu size={17} style={{ color: "var(--accent-3)" }} /> Qwen 2.5 Local (GGUF)
+                  <Cpu size={17} style={{ color: "var(--accent-3)" }} /> Qwen Local (GGUF)
                 </span>
-                <span className="badge">100% Автономная</span>
+                <span className="model-kind">Локальная</span>
               </div>
               <span className="model-card-desc">
-                Air-Gapped сервер • Данные не покидают закрытый контур ведомства. Работает без интернета.
+                {modelInfo("qwen_local")?.configured
+                  ? `Локальный сервис готов: ${modelInfo("qwen_local").model}.`
+                  : "Локальный сервис недоступен: проверьте GGUF-файл и qwen-local."}
               </span>
-            </div>
+            </button>
           </div>
 
-          {/* Мультиагентный конвейер (Stepper) */}
-          <div className="agent-pipeline-flow">
+          {!selectedModel && (
+            <div className="model-unavailable-note" role="status">
+              <AlertCircle size={17} />
+              <span>Сейчас нет доступной модели. Настройте облачный ключ или локальный сервис.</span>
+            </div>
+          )}
+
+          <details className="pipeline-details">
+            <summary>Как формируется рекомендация</summary>
+            <div className="agent-pipeline-flow">
             <div className="agent-flow-item">
               <span className="agent-flow-badge">1</span>
               <div className="agent-flow-info">
-                <strong>competency-analyst</strong>
-                <small>Анализ дефицита компетенций и исключение пройденных программ</small>
+                <strong>Проверка профиля</strong>
+                <small>Учитываются цель и уже пройденные программы.</small>
               </div>
             </div>
             <div className="agent-flow-item">
               <span className="agent-flow-badge">2</span>
               <div className="agent-flow-info">
-                <strong>trajectory-architect</strong>
-                <small>Проектирование 3 этапов развития (Базовый, Профильный, Продвинутый)</small>
+                <strong>Подбор программ</strong>
+                <small>Кандидаты выбираются из официального каталога.</small>
               </div>
             </div>
             <div className="agent-flow-item">
               <span className="agent-flow-badge">3</span>
               <div className="agent-flow-info">
-                <strong>trajectory-justifier</strong>
-                <small>Методическое обоснование на основе бенчмарков когорты коллег</small>
+                <strong>Проверка результата</strong>
+                <small>Для рекомендаций фиксируются основания и ограничения.</small>
               </div>
             </div>
-          </div>
+            </div>
+          </details>
 
           {/* Индикатор процесса при генерации */}
           {isGenerating && (
@@ -543,9 +700,7 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
               <RefreshCw size={20} className="animate-spin" />
               <div>
                 <strong>
-                  {generationStep === 1 && "Шаг 1/3: Анализ профиля и исключение дублей..."}
-                  {generationStep === 2 && "Шаг 2/3: Проектирование этапов траектории..."}
-                  {generationStep === 3 && "Шаг 3/3: Методическое обоснование и валидация..."}
+                  Создаём задачу анализа…
                 </strong>
                 <p className="muted text-xs" style={{ margin: "2px 0 0" }}>
                   Пожалуйста, подождите. ИИ-агенты Корпоративного университета формируют траекторию.
@@ -554,22 +709,11 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
             </div>
           )}
 
-          {/* Ошибка если есть */}
-          {errorMessage && (
-            <div className="state-panel state-panel-danger" style={{ padding: "12px", gap: "6px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--danger)" }}>
-                <AlertCircle size={18} />
-                <strong>Ошибка генерации</strong>
-              </div>
-              <p className="muted text-sm" style={{ margin: 0 }}>{errorMessage}</p>
-            </div>
-          )}
-
           {/* Кнопка запуска */}
           <button 
             type="button"
             className="primary-button wide"
-            disabled={isGenerating || (activeTab === "files" && uploadedFiles.length === 0)}
+            disabled={!selectedModel || isGenerating || (activeTab === "files" && uploadedFiles.length === 0)}
             onClick={handleGenerate}
             style={{ minHeight: "46px", fontSize: "1rem" }}
           >
@@ -581,7 +725,7 @@ export function TrajectoryConstructor({ onTrajectoryCreated }) {
             ) : (
               <>
                 <Sparkles size={18} style={{ marginRight: "8px" }} />
-                Сформировать индивидуальную траекторию
+                Сформировать ИОТ
               </>
             )}
           </button>

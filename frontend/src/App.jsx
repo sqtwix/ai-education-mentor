@@ -1,247 +1,88 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { Archive, Clock3, Files, Pencil, Save, Upload, XCircle } from "lucide-react";
+import { lazy, Suspense, useCallback, useState, useEffect, useRef } from "react";
+import { Clock3, XCircle } from "lucide-react";
 import {
   login,
   register,
-  uploadFiles,
-  getAnalysisStatus,
   getAnalysisHistory,
   renameAnalysisReport,
   isOfflineMode,
+  isAuthExpiredError,
   seedOfflineReports,
-  createOfflineReport,
-  updateOfflineReport,
   archiveAnalysisReport,
   unarchiveAnalysisReport,
+  getAnalysisStatus,
 } from "./api";
 import { AppLayout } from "./components/Layout";
 import { AccessibilityToolbar } from "./components/AccessibilityToolbar";
-import { ConfirmDialog, NamingDialog, ToastStack } from "./components/Feedback";
-import { AuthPage, SettingsPage, StudentsPage, CourseReportDetailPage } from "./components/Pages";
-import { TrajectoryConstructor } from "./components/TrajectoryConstructor";
-import { CatalogExplorer } from "./components/CatalogExplorer";
-import { ColleagueAnalytics } from "./components/ColleagueAnalytics";
+import { ConfirmDialog, ToastStack } from "./components/Feedback";
 import { loadUserSettings, persistUserSettings, readLocalSettings } from "./settingsService";
 import { getSidebarMaxWidth, layoutLimits, readLayoutPreferences, writeLayoutPreferences } from "./layoutPreferences";
 import {
-  exportReportToCsv,
-  exportReportToDocx,
   exportReportToJson,
   exportReportToPdf,
   exportReportToXlsx,
 } from "./reportExport";
 
-// Initial Mock Reports Data representing course reviews dialog history
-function generateMockResult(reportId) {
-  if (reportId === "1") {
-    return {
-      batch_id: "1",
-      courses_analysis: [
-        {
-          course_name: "Применение инструментов ИИ в гос управлении",
-          period: "28.05-10.06",
-          students_count: 42,
-          statistics: {
-            usefulness: { average: 8.4, median: 9.0, std_dev: 1.2, distribution: { low: 5.0, mid: 25.0, high: 70.0 } },
-            practicality: { average: 7.9, median: 8.0, std_dev: 1.5, distribution: { low: 10.0, mid: 30.0, high: 60.0 } },
-            accessibility: { average: 9.1, median: 10.0, std_dev: 0.8, distribution: { low: 2.0, mid: 18.0, high: 80.0 } },
-            interaction: { average: 8.8, median: 9.0, std_dev: 1.1, distribution: { low: 4.0, mid: 21.0, high: 75.0 } },
-            involvement: { detached_percent: 15.0, involved_percent: 85.0, yes_count: 6, no_count: 36 }
-          },
-          position_distribution: { "Специалист": 28, "Руководитель": 10, "Обеспечивающий специалист": 4 },
-          preferred_formats: {
-            "очное обучение в аудиториях Корпоративного университета": 20,
-            "смешанное обучение: частично очно, частично дистанционно": 18,
-            "полностью дистанционный формат обучения": 4
-          },
-          analytical_report: {
-            section1_general_info: "Программа: Применение инструментов ИИ в гос управлении\nПериод проведения: 28.05-10.06\nСлушатели: 42 человека (из них 28 специалистов, 10 руководителей, 4 обеспечивающих специалиста).\nПреподаватели: Николай Иванов, Ольга Смирнова.",
-            section2_key_criteria: {
-              usefulness_summary: "Слушатели высоко оценили полезность программы (средний балл 8.4). Основной интерес вызвали темы практического использования ИИ для создания презентаций и автоматизации рутины.",
-              practicality_summary: "Практико-ориентированность оценена на 7.9 балла. Большинство отметило полезность разбора реальных рабочих ситуаций, однако часть аудитории просит увеличить время на самостоятельную работу за ПК.",
-              accessibility_summary: "Максимальная оценка у доступности материала (9.1 балла). Логика построения тем названа последовательной и понятной.",
-              interaction_summary: "Взаимодействие с командой КУ оценено на 8.8 балла. Слушатели отметили высокую отзывчивость и быстрое решение возникающих вопросов.",
-              involvement_summary: "Вовлеченность составила 85%. Лишь 15% (6 человек) указали на частичную отстраненность во время теоретического блока от Сбера."
-            },
-            section3_suggestions: {
-              unwanted_topics: ["Обзорная лекция по истории ИИ", "Теоретические основы нейросетей от Сбера (повтор пройденного)"],
-              added_topics: [
-                { topic: "Написание продвинутых промптов для работы с документами", count: 8 },
-                { topic: "Автоматизация создания табличных отчетов через ИИ", count: 5 }
-              ],
-              preferred_format_summary: "Слушатели разделились во мнениях: 20 человек предпочитают классический очный формат, 18 человек высказались за смешанное обучение."
-            },
-            section4_trajectory: {
-              further_implementation_needed: "Программа крайне востребована (балл полезности 8.4). Рекомендуется продолжать реализацию с учетом доработок.",
-              student_selection_correction: "Рекомендуется более тщательно отбирать слушателей по уровню цифровых навыков, так как некоторые испытывали трудности на практике.",
-              added_topics_recommendation: "Необходимо добавить 4 часа на изучение продвинутого промптинга для документов.",
-              hours_correction_needed: "Требуется увеличить общую продолжительность курса с 16 до 24 часов за счет добавления практических часов.",
-              format_correction_needed: "Оптимальным решением будет смешанный формат обучения (Blended Learning) с практическими сессиями в классах.",
-              conclusions: [
-                "Программа имеет высокий потенциал практического применения в госслужбе.",
-                "Слабым местом является теоретический блок Сбера (жалобы на скучное изложение).",
-                "Необходимо сместить баланс в сторону практических кейсов."
-              ]
-            }
-          },
-          dashboard_data: {
-            correlation_matrix: {
-              "Полезность": { "Полезность": 1.0, "Практика": 0.78, "Доступность": 0.65, "Взаимодействие": 0.45 },
-              "Практика": { "Полезность": 0.78, "Практика": 1.0, "Доступность": 0.54, "Взаимодействие": 0.32 },
-              "Доступность": { "Полезность": 0.65, "Практика": 0.54, "Доступность": 1.0, "Взаимодействие": 0.51 },
-              "Взаимодействие": { "Полезность": 0.45, "Практика": 0.32, "Доступность": 0.51, "Взаимодействие": 1.0 }
-            },
-            trend_data: [
-              { period: "март 2026", usefulness_avg: 8.0, practicality_avg: 7.5, accessibility_avg: 8.8, interaction_avg: 8.5, involvement_avg: 80.0 },
-              { period: "апрель 2026", usefulness_avg: 8.2, practicality_avg: 7.7, accessibility_avg: 9.0, interaction_avg: 8.6, involvement_avg: 82.0 },
-              { period: "май 2026", usefulness_avg: 8.4, practicality_avg: 7.9, accessibility_avg: 9.1, interaction_avg: 8.8, involvement_avg: 85.0 }
-            ]
-          },
-          text_analysis: {
-            top_topics: [
-              { topic: "Создание презентаций через ИИ", description: "Использование нейросетей для верстки слайдов и структуры презентаций.", frequency: 15 },
-              { topic: "Автоматизация ответов гражданам", description: "Создание текстовых черновиков ответов на обращения в ведомство.", frequency: 12 },
-              { topic: "Генерация графических материалов", description: "Создание уникальных картинок для докладов через графические сети.", frequency: 8 }
-            ],
-            sentiment: { positive: 70.0, neutral: 20.0, negative: 10.0 },
-            key_problems: [
-              { problem: "Мало практических занятий за ПК", frequency_percent: 32.0, severity: "High" },
-              { problem: "Скучное изложение теории от Сбера", frequency_percent: 18.0, severity: "Medium" }
-            ],
-            quotes: [
-              { quote: "Было актуально изучить создание презентаций с помощью ИИ, так как это ускоряет процесс их создания.", frequency: 4 },
-              { quote: "Хочется больше практики непосредственно в различных моделях искусственного интеллекта.", frequency: 3 }
-            ],
-            recommendations: [
-              { target: "Теория", action_item: "Заменить или доработать блок лекций от Сбера, улучшить интерактивность.", priority: "Medium" },
-              { target: "Практика", action_item: "Выделить больше часов для личной работы за ПК под руководством куратора.", priority: "High" }
-            ]
-          }
-        }
-      ]
-    };
-  }
+const initialMockReports = [];
 
-  if (reportId === "2") {
-    return {
-      batch_id: "2",
-      courses_analysis: [
-        {
-          course_name: "Разработка на Python для госслужащих",
-          period: "12.05-25.05",
-          students_count: 35,
-          statistics: {
-            usefulness: { average: 7.8, median: 8.0, std_dev: 1.4, distribution: { low: 8.0, mid: 32.0, high: 60.0 } },
-            practicality: { average: 7.2, median: 7.0, std_dev: 1.7, distribution: { low: 15.0, mid: 35.0, high: 50.0 } },
-            accessibility: { average: 8.5, median: 9.0, std_dev: 1.1, distribution: { low: 5.0, mid: 25.0, high: 70.0 } },
-            interaction: { average: 8.6, median: 9.0, std_dev: 1.0, distribution: { low: 4.0, mid: 26.0, high: 70.0 } },
-            involvement: { detached_percent: 22.0, involved_percent: 78.0, yes_count: 8, no_count: 27 }
-          },
-          position_distribution: { "Специалист": 20, "Руководитель": 12, "Обеспечивающий специалист": 3 },
-          preferred_formats: {
-            "очное обучение в аудиториях Корпоративного университета": 12,
-            "смешанное обучение: частично очно, частично дистанционно": 18,
-            "полностью дистанционный формат обучения": 5
-          },
-          analytical_report: {
-            section1_general_info: "Программа: Разработка на Python для госслужащих\nПериод проведения: 12.05-25.05\nСлушатели: 35 человек.\nПреподаватели: Петр Сидоров, Анна Кузнецова.",
-            section2_key_criteria: {
-              usefulness_summary: "Полезность программы оценена на 7.8 балла. Слушатели оценили возможность автоматизации рутинных процессов (работа с Excel и PDF через скрипты).",
-              practicality_summary: "Практичность оценена на 7.2 балла. Часть слушателей столкнулась со сложностями в установке окружения Anaconda на рабочих местах.",
-              accessibility_summary: "Доступность составила 8.5 балла. Написание кода с нуля вызвало затруднения у руководителей.",
-              interaction_summary: "Взаимодействие с КУ оценено на 8.6 балла. Оперативная техническая помощь в настройке ПО.",
-              involvement_summary: "Вовлеченность составила 78%. Отстраненность в 22% связана со сложностью синтаксиса программирования."
-            },
-            section3_suggestions: {
-              unwanted_topics: ["Сложные структуры классов и ООП", "Работа с базами данных (слишком углубленно)"],
-              added_topics: [
-                { topic: "Работа с библиотекой pandas для анализа Excel таблиц", count: 10 },
-                { topic: "Основы веб-скрейпинга для госслужащих", count: 4 }
-              ],
-              preferred_format_summary: "Большинство выбрало смешанный формат обучения для возможности проработки кода дома."
-            },
-            section4_trajectory: {
-              further_implementation_needed: "Продолжить реализацию, разделив группы на базовый и продвинутый уровень.",
-              student_selection_correction: "Рекомендуется не включать в группы программирования слушателей без базовой компьютерной грамотности.",
-              added_topics_recommendation: "Добавить разбор библиотеки pandas во вторую часть программы.",
-              hours_correction_needed: "Увеличить практическую часть за счет сокращения лекционного материала.",
-              format_correction_needed: "Рекомендован смешанный формат (лекции - вебинары, практика - очно в классах).",
-              conclusions: [
-                "Программа актуальна для автоматизации табличных данных.",
-                "Необходимо исключить сложные абстрактные темы ООП.",
-                "Разделить потоки на руководителей и специалистов."
-              ]
-            }
-          },
-          dashboard_data: {
-            correlation_matrix: {
-              "Полезность": { "Полезность": 1.0, "Практика": 0.81, "Доступность": 0.58, "Взаимодействие": 0.39 },
-              "Практика": { "Полезность": 0.81, "Практика": 1.0, "Доступность": 0.62, "Взаимодействие": 0.41 },
-              "Доступность": { "Полезность": 0.58, "Практика": 0.62, "Доступность": 1.0, "Взаимодействие": 0.48 },
-              "Взаимодействие": { "Полезность": 0.39, "Практика": 0.41, "Доступность": 0.48, "Взаимодействие": 1.0 }
-            },
-            trend_data: [
-              { period: "апрель 2026", usefulness_avg: 7.5, practicality_avg: 6.8, accessibility_avg: 8.2, interaction_avg: 8.4, involvement_avg: 72.0 },
-              { period: "май 2026", usefulness_avg: 7.8, practicality_avg: 7.2, accessibility_avg: 8.5, interaction_avg: 8.6, involvement_avg: 78.0 }
-            ]
-          },
-          text_analysis: {
-            top_topics: [
-              { topic: "Автоматизация Excel таблиц", description: "Написание скриптов для слияния и фильтрации Excel файлов.", frequency: 18 },
-              { topic: "Парсинг документов PDF", description: "Извлечение текстовых блоков из отчетов PDF.", frequency: 10 }
-            ],
-            sentiment: { positive: 62.0, neutral: 25.0, negative: 13.0 },
-            key_problems: [
-              { problem: "Трудности с установкой Anaconda", frequency_percent: 25.0, severity: "Medium" },
-              { problem: "Слишком быстрый темп лектора", frequency_percent: 20.0, severity: "High" }
-            ],
-            quotes: [
-              { quote: "Очень помогли скрипты для работы с Excel, теперь экономлю по 2 часа в день.", frequency: 5 }
-            ],
-            recommendations: [
-              { target: "Программа", action_item: "Разделить обучение на два независимых трека: Базовый и Продвинутый.", priority: "High" }
-            ]
-          }
-        }
-      ]
-    };
-  }
+const chunkReloadKey = "iot:chunk-reload";
 
-  return null;
+function ChunkLoadError() {
+  return (
+    <div className="state-panel" role="alert">
+      <span className="state-icon state-icon-warm">
+        <XCircle size={28} strokeWidth={2.2} />
+      </span>
+      <h2>Раздел не загрузился</h2>
+      <p className="muted">Обновите страницу и повторите действие.</p>
+      <button className="primary-button state-action" type="button" onClick={() => window.location.reload()}>
+        Обновить страницу
+      </button>
+    </div>
+  );
 }
 
-const initialMockReports = [
-  {
-    id: "1",
-    course: "Применение инструментов ИИ в гос управлении",
-    title: "Анализ опроса за период 28.05-10.06",
-    status: "Completed",
-    isArchived: false,
-    createdAt: new Date().toISOString(),
-    result: generateMockResult("1")
-  },
-  {
-    id: "2",
-    course: "Разработка на Python для госслужащих",
-    title: "Анализ опроса за период 12.05-25.05",
-    status: "Completed",
-    isArchived: false,
-    createdAt: new Date().toISOString(),
-    result: generateMockResult("2")
+const lazyNamed = (loader, exportName) => lazy(async () => {
+  try {
+    const module = await loader();
+    sessionStorage.removeItem(chunkReloadKey);
+    return { default: module[exportName] };
+  } catch {
+    if (sessionStorage.getItem(chunkReloadKey) !== exportName) {
+      sessionStorage.setItem(chunkReloadKey, exportName);
+      window.location.reload();
+      return new Promise(() => {});
+    }
+
+    sessionStorage.removeItem(chunkReloadKey);
+    return { default: ChunkLoadError };
   }
-];
+});
+
+const AuthPage = lazyNamed(() => import("./components/Pages"), "AuthPage");
+const SettingsPage = lazyNamed(() => import("./components/Pages"), "SettingsPage");
+const StudentsPage = lazyNamed(() => import("./components/Pages"), "StudentsPage");
+const CourseReportDetailPage = lazyNamed(() => import("./components/Pages"), "CourseReportDetailPage");
+const TrajectoryConstructor = lazyNamed(() => import("./components/TrajectoryConstructor"), "TrajectoryConstructor");
+const CatalogExplorer = lazyNamed(() => import("./components/CatalogExplorer"), "CatalogExplorer");
+const ColleagueAnalytics = lazyNamed(() => import("./components/ColleagueAnalytics"), "ColleagueAnalytics");
+
+const pageLoadingFallback = (
+  <div className="state-panel" role="status" aria-live="polite">
+    <p className="muted">Загрузка раздела…</p>
+  </div>
+);
 
 function App() {
   const [route, setRoute] = useState(() => {
-    return window.location.hash.replace("#", "") || "upload";
+    const initialRoute = window.location.hash.replace("#", "") || "upload";
+    const isAuthRoute = initialRoute === "login" || initialRoute === "register";
+    const hasToken = !!localStorage.getItem("token");
+    if (!hasToken && !isAuthRoute) return "login";
+    if (hasToken && isAuthRoute) return "upload";
+    return initialRoute;
   });
   const [mockReports, setMockReports] = useState([]);
-  const [selectedModel, setSelectedModel] = useState("Qwen_Local");
-  const [selectedResponseFiles, setSelectedResponseFiles] = useState([]);
-  const [showValidation, setShowValidation] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisProgress, setAnalysisProgress] = useState(0);
-  const [analysisTaskId, setAnalysisTaskId] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [toasts, setToasts] = useState([]);
@@ -250,12 +91,16 @@ function App() {
   const [userSettings, setUserSettings] = useState(() => readLocalSettings());
   const [layoutPreferences, setLayoutPreferences] = useState(() => readLayoutPreferences());
   const [systemThemeTick, setSystemThemeTick] = useState(0);
+  const [taskProgress, setTaskProgress] = useState(null);
+  const [historyLoadError, setHistoryLoadError] = useState("");
+  const [archiveLoadError, setArchiveLoadError] = useState("");
 
   // Authentication states
   const [token, setToken] = useState(() => localStorage.getItem("token") || "");
   const [user, setUser] = useState(() => localStorage.getItem("username") || "");
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "");
   const [authError, setAuthError] = useState("");
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
 
   // Login form states
   const [loginEmail, setLoginEmail] = useState("");
@@ -266,20 +111,13 @@ function App() {
   const [registerEmail, setRegisterEmail] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
 
-  const responsesInputRef = useRef(null);
-  const intervalRef = useRef(null);
   const saveActionsRef = useRef(null);
   const profileActionsRef = useRef(null);
-
-  // Naming & Renaming states
-  const [showNamingModal, setShowNamingModal] = useState(false);
-  const [namingTaskId, setNamingTaskId] = useState("");
-  const [namingValue, setNamingValue] = useState("");
-  const [isSavingName, setIsSavingName] = useState(false);
+  const userSettingsRef = useRef(userSettings);
+  const settingsRequestRef = useRef(0);
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitleValue, setEditTitleValue] = useState("");
-  const [isEditingReportContent, setIsEditingReportContent] = useState(false);
 
   const updateLayoutPreferences = (patch) => {
     setLayoutPreferences((currentPreferences) => ({
@@ -342,41 +180,64 @@ function App() {
   };
   const [isSaveMenuOpen, setIsSaveMenuOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
-  const [manualCourse, setManualCourse] = useState("Новый локальный курс");
-  const [manualTitle, setManualTitle] = useState("Черновик offline-отчета");
 
-  const notify = (toast) => {
+  const notify = useCallback((toast) => {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    setToasts((currentToasts) => [...currentToasts, { id, type: "info", ...toast }]);
+    setToasts((currentToasts) => [
+      ...currentToasts.filter((currentToast) => !toast.key || currentToast.key !== toast.key),
+      { id, type: "info", ...toast },
+    ]);
     window.setTimeout(() => {
       setToasts((currentToasts) => currentToasts.filter((currentToast) => currentToast.id !== id));
     }, toast.duration || 4200);
-  };
+  }, []);
 
   const dismissToast = (toastId) => {
     setToasts((currentToasts) => currentToasts.filter((toast) => toast.id !== toastId));
   };
 
   const handleSettingsChange = async (patch) => {
+    const currentSettings = userSettingsRef.current;
     const nextSettings = {
-      ...userSettings,
+      ...currentSettings,
       ...patch,
+      accessibility: patch.accessibility
+        ? { ...currentSettings.accessibility, ...patch.accessibility }
+        : currentSettings.accessibility,
     };
+    const requestId = settingsRequestRef.current + 1;
+    settingsRequestRef.current = requestId;
+    userSettingsRef.current = nextSettings;
     setUserSettings(nextSettings);
 
-    const { settings } = await persistUserSettings(nextSettings);
-    setUserSettings(settings);
+    const { settings, syncStatus } = await persistUserSettings(nextSettings);
+    if (settingsRequestRef.current === requestId) {
+      userSettingsRef.current = settings;
+      setUserSettings(settings);
+      notify(syncStatus === "synced"
+        ? { key: "settings-sync", type: "success", title: "Настройки сохранены" }
+        : {
+            key: "settings-sync",
+            type: "warning",
+            title: "Настройки сохранены на устройстве",
+            message: "Синхронизация с сервером произойдёт после восстановления соединения.",
+          });
+    }
   };
 
   const mapReportFromApi = (apiReport) => {
     const result = apiReport.result || {};
     const coursesAnalysis = result.courses_analysis || [];
     const courseAnalysis = coursesAnalysis[0] || {};
+    const reportName = apiReport.courseName
+      || apiReport.course
+      || courseAnalysis.course_name
+      || "Индивидуальная траектория";
 
     return {
       id: apiReport.id || result.batch_id,
-      course: courseAnalysis.course_name || apiReport.course || "Электронный курс",
-      title: apiReport.title || `Анализ опроса за период ${courseAnalysis.period || ""}`,
+      course: reportName,
+      title: apiReport.title || reportName,
       status: apiReport.status,
       error: apiReport.error,
       isArchived: Boolean(apiReport.isArchived),
@@ -387,40 +248,48 @@ function App() {
 
   const fetchHistory = async () => {
     try {
+      setHistoryLoadError("");
       const historyData = await getAnalysisHistory();
       if (Array.isArray(historyData)) {
         const mapped = isOfflineMode ? historyData : historyData.map(mapReportFromApi);
         setMockReports(mapped);
       }
     } catch (err) {
+      if (isAuthExpiredError(err)) return;
       console.error("Failed to fetch analysis history:", err);
+      setHistoryLoadError(err.message || "Не удалось загрузить историю отчетов.");
     }
   };
 
   const fetchArchivedHistory = async () => {
     try {
+      setArchiveLoadError("");
       const historyData = await getAnalysisHistory({ onlyArchived: true });
       if (Array.isArray(historyData)) {
         const mapped = isOfflineMode ? historyData : historyData.map(mapReportFromApi);
         setArchivedReports(mapped);
       }
     } catch (err) {
+      if (isAuthExpiredError(err)) return;
       console.error("Failed to fetch archived analysis history:", err);
+      setArchiveLoadError(err.message || "Не удалось загрузить архив отчетов.");
     }
   };
 
   useEffect(() => {
-    seedOfflineReports(initialMockReports);
+    if (isOfflineMode) {
+      seedOfflineReports(initialMockReports);
+    }
   }, []);
 
   useEffect(() => {
-    if (token) {
-      fetchHistory();
-      fetchArchivedHistory();
-    } else {
-      setMockReports([]);
-      setArchivedReports([]);
-    }
+    if (!token) return;
+
+    const loadHistory = async () => {
+      await Promise.all([fetchHistory(), fetchArchivedHistory()]);
+    };
+
+    loadHistory();
   }, [token]);
 
   useEffect(() => {
@@ -428,6 +297,8 @@ function App() {
       setToken("");
       setUser("");
       setUserEmail("");
+      setMockReports([]);
+      setArchivedReports([]);
       setRoute("login");
       window.location.hash = "login";
       notify({
@@ -439,17 +310,41 @@ function App() {
 
     window.addEventListener("auth:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("auth:unauthorized", handleUnauthorized);
-  }, []);
+  }, [notify]);
+
+  useEffect(() => {
+    const handleNetworkError = () => notify({
+      key: "api-connection",
+      type: "error",
+      title: "Соединение потеряно",
+      message: "Проверьте сеть. Доступные действия можно повторить после восстановления связи.",
+      duration: 7000,
+    });
+    const handleConnectionRestored = () => notify({
+      key: "api-connection",
+      type: "success",
+      title: "Соединение восстановлено",
+    });
+
+    window.addEventListener("api:network-error", handleNetworkError);
+    window.addEventListener("api:connection-restored", handleConnectionRestored);
+    return () => {
+      window.removeEventListener("api:network-error", handleNetworkError);
+      window.removeEventListener("api:connection-restored", handleConnectionRestored);
+    };
+  }, [notify]);
 
   useEffect(() => {
     let ignore = false;
+    const settingsVersionAtStart = settingsRequestRef.current;
 
     const syncSettings = async () => {
       const { settings } = token
         ? await loadUserSettings()
         : { settings: readLocalSettings() };
 
-      if (!ignore) {
+      if (!ignore && settingsRequestRef.current === settingsVersionAtStart) {
+        userSettingsRef.current = settings;
         setUserSettings(settings);
       }
     };
@@ -499,7 +394,7 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const hasProcessing = mockReports.some(r => r.status === "Processing");
+    const hasProcessing = mockReports.some(r => ["Queued", "Processing", "Retrying"].includes(r.status));
     if (!hasProcessing) return;
 
     const interval = setInterval(() => {
@@ -509,10 +404,39 @@ function App() {
     return () => clearInterval(interval);
   }, [mockReports]);
 
+  useEffect(() => {
+    if (!route.startsWith("report-detail-")) {
+      return undefined;
+    }
+    const reportId = route.replace("report-detail-", "");
+    const report = mockReports.find((item) => item.id === reportId);
+    if (!report || !["Queued", "Processing", "Retrying"].includes(report.status)) {
+      return undefined;
+    }
+
+    let ignore = false;
+    const loadProgress = async () => {
+      try {
+        const progress = await getAnalysisStatus(reportId);
+        if (!ignore) setTaskProgress(progress);
+      } catch (err) {
+        if (!isAuthExpiredError(err)) console.error("Failed to fetch task progress:", err);
+      }
+    };
+
+    loadProgress();
+    const interval = window.setInterval(loadProgress, 2000);
+    return () => {
+      ignore = true;
+      window.clearInterval(interval);
+    };
+  }, [mockReports, route]);
+
   // Sync route with window hash and enforce route protection
   useEffect(() => {
     const handleHashChange = () => {
       const newRoute = window.location.hash.replace("#", "") || "upload";
+      setTaskProgress(null);
       
       const isAuthRoute = newRoute === "login" || newRoute === "register";
       const hasToken = !!localStorage.getItem("token");
@@ -525,36 +449,25 @@ function App() {
         setRoute(newRoute);
       }
       setIsEditingTitle(false); // Reset inline edit state on navigation
-      setIsEditingReportContent(false);
       setIsSaveMenuOpen(false);
       setIsProfileMenuOpen(false);
       setIsMenuOpen(false); // Close mobile drawer on route change
     };
 
-    const initialRoute = window.location.hash.replace("#", "") || "upload";
-    const isAuthRoute = initialRoute === "login" || initialRoute === "register";
-    const hasToken = !!localStorage.getItem("token");
-
-    if (!hasToken && !isAuthRoute) {
-      window.location.hash = "login";
-      setRoute("login");
-    } else if (hasToken && isAuthRoute) {
-      window.location.hash = "upload";
-      setRoute("upload");
-    } else {
-      setRoute(initialRoute);
+    const currentHash = window.location.hash.replace("#", "");
+    if (currentHash !== route) {
+      window.history.replaceState(null, "", `#${route}`);
     }
 
     window.addEventListener("hashchange", handleHashChange);
     return () => {
       window.removeEventListener("hashchange", handleHashChange);
-      if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, []);
+  }, [route]);
 
   // Update document title dynamically
   useEffect(() => {
-    document.title = "Анализ отзывов студентов — личный кабинет";
+    document.title = "ИИ-агент индивидуальной траектории обучения";
   }, []);
 
   useEffect(() => {
@@ -583,6 +496,8 @@ function App() {
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
+    if (isAuthSubmitting) return;
+    setIsAuthSubmitting(true);
     setAuthError("");
     try {
       if (!loginEmail || !loginPassword) {
@@ -603,19 +518,28 @@ function App() {
         throw new Error("Неверный формат ответа сервера.");
       }
     } catch (err) {
-      setAuthError(err.message || "Ошибка авторизации.");
+      const message = String(err.message || "");
+      setAuthError(
+        /invalid|неверн|unauthorized|credential/i.test(message)
+          ? "Неверный email или пароль."
+          : message || "Не удалось войти. Попробуйте еще раз."
+      );
+    } finally {
+      setIsAuthSubmitting(false);
     }
   };
 
   const handleRegisterSubmit = async (e) => {
     e.preventDefault();
+    if (isAuthSubmitting) return;
+    setIsAuthSubmitting(true);
     setAuthError("");
     try {
       if (!registerUsername || !registerEmail || !registerPassword) {
         throw new Error("Заполните все поля.");
       }
-      if (registerPassword.length < 6) {
-        throw new Error("Пароль должен быть не менее 6 символов.");
+      if (registerPassword.length < 12 || registerPassword.length > 128) {
+        throw new Error("Пароль должен содержать от 12 до 128 символов.");
       }
       const data = await register(registerUsername, registerEmail, registerPassword);
       if (data && data.token) {
@@ -634,6 +558,8 @@ function App() {
       }
     } catch (err) {
       setAuthError(err.message || "Ошибка регистрации.");
+    } finally {
+      setIsAuthSubmitting(false);
     }
   };
 
@@ -645,6 +571,8 @@ function App() {
     setToken("");
     setUser("");
     setUserEmail("");
+    setMockReports([]);
+    setArchivedReports([]);
     setRoute("login");
     window.location.hash = "login";
   };
@@ -655,238 +583,28 @@ function App() {
   }, [isMenuOpen]);
 
   const getPageTitle = (currentRoute) => {
-    if (currentRoute === "upload") return "Загрузка данных";
+    if (currentRoute === "upload" || currentRoute === "constructor") return "Создание траектории";
     if (currentRoute.startsWith("report-detail-")) return "Детали отчёта";
-    if (currentRoute === "students") return "Студенты";
+    if (currentRoute === "catalog") return "Каталог программ";
+    if (currentRoute === "analytics" || currentRoute === "benchmarks") return "Аналитика обучения";
+    if (currentRoute === "students") return "Сводка обучения";
     if (currentRoute === "settings") return "Настройки";
     if (currentRoute === "login") return "Авторизация";
     if (currentRoute === "register") return "Регистрация";
-    return "Анализ отзывов студентов";
-  };
-
-  const handleFileChange = (e, type) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    if (type === "responses") {
-      setSelectedResponseFiles(Array.from(files));
-    }
-  };
-
-  const uploadValidation = useMemo(() => {
-    if (selectedResponseFiles.length === 0) {
-      return {
-        status: "idle",
-        title: "Файлы не выбраны",
-        message: "Выберите Excel, CSV или ZIP-архив с анкетами.",
-      };
-    }
-
-    const allowedExtensions = new Set(["csv", "xlsx", "zip"]);
-    const invalidFiles = selectedResponseFiles.filter((file) => {
-      const extension = file.name.split(".").pop()?.toLowerCase();
-      return !allowedExtensions.has(extension);
-    });
-    const emptyFiles = selectedResponseFiles.filter((file) => file.size === 0);
-
-    if (invalidFiles.length > 0) {
-      return {
-        status: "error",
-        title: "Неподдерживаемый формат",
-        message: `Проверьте файлы: ${invalidFiles.map((file) => file.name).join(", ")}. Поддерживаются только .xlsx, .csv и .zip.`,
-      };
-    }
-
-    if (emptyFiles.length > 0) {
-      return {
-        status: "error",
-        title: "Пустой файл",
-        message: `Файлы без данных не будут обработаны: ${emptyFiles.map((file) => file.name).join(", ")}.`,
-      };
-    }
-
-    return {
-      status: "pending",
-      title: "Базовая проверка пройдена",
-      message: "Расширения и размер файлов корректны. Наличие обязательных колонок проверит сервер при запуске анализа.",
-    };
-  }, [selectedResponseFiles]);
-
-  // Trigger validation banner visibility
-  useEffect(() => {
-    if (selectedResponseFiles.length > 0) {
-      setShowValidation(true);
-    } else {
-      setShowValidation(false);
-    }
-  }, [selectedResponseFiles]);
-
-  const resetUploadForm = () => {
-    setSelectedResponseFiles([]);
-    setShowValidation(false);
-    setIsAnalyzing(false);
-    setAnalysisProgress(0);
-    if (responsesInputRef.current) responsesInputRef.current.value = "";
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    return "ИИ-агент ИОТ";
   };
 
   const handleNewAnalysis = () => {
-    resetUploadForm();
     window.location.hash = "upload";
-  };
-
-  const startAnalysis = async () => {
-    if (selectedResponseFiles.length === 0) {
-      notify({
-        type: "warning",
-        title: "Не хватает файлов",
-        message: "Выберите файлы анкет опросов перед запуском анализа.",
-      });
-      return;
-    }
-
-    if (uploadValidation.status === "error") {
-      notify({
-        type: "error",
-        title: uploadValidation.title,
-        message: uploadValidation.message,
-      });
-      return;
-    }
-
-    setIsAnalyzing(true);
-    setAnalysisProgress(0);
-    setAnalysisTaskId("Отправка...");
-
-    try {
-      const data = await uploadFiles(selectedResponseFiles, selectedModel);
-      
-      const serverTaskId = data.task_id;
-      setAnalysisTaskId(serverTaskId);
-
-      // Show success alert showing that files were successfully sent and accepted
-      notify({
-        type: "success",
-        title: "Файлы приняты",
-        message: data.message || "Файлы успешно отправлены и приняты в обработку.",
-      });
-
-      let progress = 0;
-      let hasCompleted = false;
-
-      // Local progress helper that goes slowly up to 90%
-      intervalRef.current = setInterval(() => {
-        if (!hasCompleted) {
-          progress += Math.floor(Math.random() * 4) + 1;
-          if (progress > 90) progress = 90;
-          setAnalysisProgress(progress);
-        }
-      }, 1000);
-
-      // Polling function
-      const poll = async () => {
-        try {
-          const statusRes = await getAnalysisStatus(serverTaskId);
-          if (statusRes.status === "Completed") {
-            hasCompleted = true;
-            clearInterval(intervalRef.current);
-            setAnalysisProgress(100);
-
-            // Construct new report based on real result from model
-            const result = statusRes.result || {};
-            const cleanResponseName = selectedResponseFiles[0].name.replace(/\.[^/.]+$/, "");
-            const courseName = cleanResponseName.replace(/^\d{2}\.\d{2}-\d{2}\.\d{2}\s+/, "");
-
-            setNamingTaskId(serverTaskId);
-            setNamingValue(courseName);
-            setShowNamingModal(true);
-
-            const completedReport = {
-              id: serverTaskId,
-              course: courseName,
-              title: `Анализ опроса за период ${cleanResponseName.match(/^\d{2}\.\d{2}-\d{2}\.\d{2}/)?.[0] || ""}`,
-              status: "Completed",
-              isArchived: false,
-              createdAt: new Date().toISOString(),
-              result: result
-            };
-
-            setMockReports((prev) => [completedReport, ...prev]);
-            resetUploadForm();
-          } else if (statusRes.status === "Failed") {
-            clearInterval(intervalRef.current);
-            setIsAnalyzing(false);
-            await fetchHistory();
-            notify({
-              type: "error",
-              title: "Анализ провалился",
-              message: statusRes.error || "Неизвестная ошибка на стороне сервера.",
-            });
-          } else {
-            // Processing... Continue polling after timeout
-            setTimeout(poll, 3000);
-          }
-        } catch (err) {
-          console.error("Polling error:", err);
-          // Retry polling in case of transient network issues
-          setTimeout(poll, 3000);
-        }
-      };
-
-      // Start polling after 2 seconds
-      setTimeout(poll, 2000);
-
-    } catch (err) {
-      setIsAnalyzing(false);
-      notify({
-        type: "error",
-        title: "Не удалось отправить файлы",
-        message: err.message,
-      });
-    }
-  };
-
-  const handleSaveReportName = async (e) => {
-    if (e) e.preventDefault();
-    if (!namingValue.trim()) {
-      notify({
-        type: "warning",
-        title: "Введите название",
-        message: "Название поможет быстро найти отчет в истории.",
-      });
-      return;
-    }
-    setIsSavingName(true);
-    try {
-      await renameAnalysisReport(namingTaskId, namingValue);
-      await fetchHistory();
-      setShowNamingModal(false);
-      notify({
-        type: "success",
-        title: "Название сохранено",
-        message: "Отчет добавлен в историю анализов.",
-      });
-      window.location.hash = `report-detail-${namingTaskId}`;
-    } catch (err) {
-      notify({
-        type: "error",
-        title: "Не удалось сохранить название",
-        message: err.message,
-      });
-    } finally {
-      setIsSavingName(false);
-    }
-  };
-
-  const handleSkipNaming = async () => {
-    setShowNamingModal(false);
-    await fetchHistory();
-    window.location.hash = `report-detail-${namingTaskId}`;
   };
 
   const handleInlineRenameSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!editTitleValue.trim()) return;
+    if (editTitleValue.trim().length > 255) {
+      notify({ type: "warning", title: "Название слишком длинное", message: "Используйте не более 255 символов." });
+      return;
+    }
 
     const reportId = route.replace("report-detail-", "");
     try {
@@ -906,100 +624,6 @@ function App() {
     }
   };
 
-  const persistOfflineReport = (reportId, patch) => {
-    setMockReports((reports) =>
-      reports.map((report) => (report.id === reportId ? { ...report, ...patch } : report))
-    );
-    updateOfflineReport(reportId, patch).catch((err) => {
-      notify({
-        type: "error",
-        title: "Не удалось сохранить изменения",
-        message: err.message,
-      });
-    });
-  };
-
-  const handleReportFieldChange = (reportId, field, value) => {
-    persistOfflineReport(reportId, { [field]: value });
-  };
-
-  const handleFindingChange = (report, index, field, value) => {
-    const nextErrors = report.errors.map((error, currentIndex) =>
-      currentIndex === index ? { ...error, [field]: value } : error
-    );
-    persistOfflineReport(report.id, { errors: nextErrors });
-  };
-
-  const addFinding = (report) => {
-    persistOfflineReport(report.id, {
-      errors: [
-        ...report.errors,
-        {
-          priority: "medium",
-          val: "25%",
-          question: "Новый вопрос",
-          text: "Опишите найденную массовую ошибку.",
-        },
-      ],
-    });
-  };
-
-  const removeFinding = (report, index) => {
-    persistOfflineReport(report.id, {
-      errors: report.errors.filter((_, currentIndex) => currentIndex !== index),
-    });
-  };
-
-  const handleRecommendationChange = (report, index, value) => {
-    const nextRecommendations = report.recommendations.map((recommendation, currentIndex) =>
-      currentIndex === index ? value : recommendation
-    );
-    persistOfflineReport(report.id, { recommendations: nextRecommendations });
-  };
-
-  const addRecommendation = (report) => {
-    persistOfflineReport(report.id, {
-      recommendations: [...report.recommendations, "Новая рекомендация для методиста."],
-    });
-  };
-
-  const removeRecommendation = (report, index) => {
-    persistOfflineReport(report.id, {
-      recommendations: report.recommendations.filter((_, currentIndex) => currentIndex !== index),
-    });
-  };
-
-  const handleCreateManualReport = async (e) => {
-    e.preventDefault();
-    try {
-      const report = await createOfflineReport({
-        course: manualCourse.trim() || "Новый локальный курс",
-        title: manualTitle.trim() || "Черновик offline-отчета",
-        errors: [
-          {
-            priority: "medium",
-            val: "30%",
-            question: "Вопрос q_demo",
-            text: "Черновая находка для ручного редактирования в песочнице.",
-          },
-        ],
-        recommendations: ["Уточните содержание отчета в редакторе offline mode."],
-      });
-      await fetchHistory();
-      window.location.hash = `report-detail-${report.id}`;
-      notify({
-        type: "success",
-        title: "Черновик создан",
-        message: "Отчет открыт для просмотра и редактирования.",
-      });
-    } catch (err) {
-      notify({
-        type: "error",
-        title: "Не удалось создать отчет",
-        message: err.message,
-      });
-    }
-  };
 
   const handleArchiveReport = async (reportId) => {
     setArchiveTargetId(reportId);
@@ -1011,7 +635,6 @@ function App() {
       await archiveAnalysisReport(archiveTargetId);
       await fetchHistory();
       await fetchArchivedHistory();
-      setIsEditingReportContent(false);
       const archivedRoute = `report-detail-${archiveTargetId}`;
       setArchiveTargetId("");
       if (route === archivedRoute) {
@@ -1052,24 +675,20 @@ function App() {
   const handleExportReport = async (report, format) => {
     setIsSaveMenuOpen(false);
     try {
+      const isDegraded = report?.status === "CompletedWithLimitations"
+        || report?.result?.quality_status === "degraded"
+        || report?.result?.trajectory?.quality_status === "degraded";
+      if (isDegraded) {
+        throw new Error("Резервный результат нельзя экспортировать до экспертной проверки.");
+      }
       if (format === "pdf") {
         await exportReportToPdf(report);
         notify({ type: "success", title: "PDF сохранен" });
         return;
       }
-      if (format === "excel") {
+      if (format === "excel" || format === "xlsx") {
         await exportReportToXlsx(report);
-        notify({ type: "success", title: "Excel сохранен" });
-        return;
-      }
-      if (format === "docx") {
-        await exportReportToDocx(report);
-        notify({ type: "success", title: "DOCX сохранен" });
-        return;
-      }
-      if (format === "csv") {
-        exportReportToCsv(report);
-        notify({ type: "success", title: "CSV сохранен" });
+        notify({ type: "success", title: "XLSX сохранен" });
         return;
       }
       exportReportToJson(report);
@@ -1079,26 +698,16 @@ function App() {
       notify({
         type: "error",
         title: "Не удалось сохранить файл",
+        message: err.message,
       });
     }
-  };
-
-  const getTimelineStepClass = (stepIndex, currentProgress) => {
-    const thresholds = [0, 25, 50, 75];
-    if (currentProgress >= thresholds[stepIndex]) {
-      if (currentProgress > thresholds[stepIndex] + 20 || currentProgress === 100) {
-        return "done";
-      }
-      return "active-step";
-    }
-    return "";
   };
 
   const renderActivePage = () => {
     if (route === "catalog") {
       return (
         <section className="page active" id="catalog" data-title="Каталог программ 2025">
-          <CatalogExplorer />
+          <CatalogExplorer notify={notify} />
         </section>
       );
     }
@@ -1106,7 +715,7 @@ function App() {
     if (route === "analytics" || route === "benchmarks") {
       return (
         <section className="page active" id="analytics" data-title="Бенчмарк должностей">
-          <ColleagueAnalytics />
+          <ColleagueAnalytics notify={notify} />
         </section>
       );
     }
@@ -1115,11 +724,12 @@ function App() {
       return (
         <section className="page active" id="constructor" data-title="Конструктор ИОТ">
           <TrajectoryConstructor
+            notify={notify}
             onTrajectoryCreated={(taskId) => {
               notify({
                 type: "success",
-                title: "Траектория сформирована",
-                message: "ИИ-агенты успешно составили индивидуальную траекторию обучения.",
+                title: "Запрос принят",
+                message: "Формирование траектории началось. Статус обновится автоматически.",
               });
               fetchHistory();
               window.location.hash = `report-detail-${taskId}`;
@@ -1150,15 +760,57 @@ function App() {
         );
       }
 
-      if (report.status === "Processing") {
+      if (["Queued", "Processing", "Retrying"].includes(report.status)) {
+        const pendingTitle = report.status === "Queued"
+          ? "Анализ поставлен в очередь"
+          : report.status === "Retrying"
+            ? "Ожидание повторной попытки"
+            : "Анализ в процессе...";
         return (
           <section className="page active" id="report-detail" data-title="Детали отчёта">
             <div className="state-panel">
               <span className="state-icon">
                 <Clock3 size={28} strokeWidth={2.2} />
               </span>
-              <h2>Анализ в процессе...</h2>
-              <p className="muted">ИИ-агенты в данный момент обрабатывают файлы ответов студентов. Пожалуйста, подождите.</p>
+              <h2>{pendingTitle}</h2>
+              <p className="muted">
+                {taskProgress?.progress_message || "Профиль и выбранная модель сохранены. Ожидаем фактический этап обработки."}
+              </p>
+              <div className="trajectory-progress" aria-label="Прогресс формирования траектории">
+                <div
+                  className={`trajectory-progress-track ${Number.isFinite(taskProgress?.progress_percent) ? "" : "is-indeterminate"}`.trim()}
+                  aria-hidden="true"
+                >
+                  <span style={Number.isFinite(taskProgress?.progress_percent)
+                    ? { width: `${taskProgress.progress_percent}%` }
+                    : undefined}
+                  />
+                </div>
+                <ol>
+                  {[
+                    ["queued", "Очередь"],
+                    ["profile_analysis", "Анализ профиля"],
+                    ["course_selection", "Подбор программ"],
+                    ["result_formation", "Формирование результата"],
+                  ].map(([stage, label], index, stages) => {
+                    const matchedStageOrder = stages.findIndex(([currentStage]) => currentStage === taskProgress?.progress_stage);
+                    const stageOrder = taskProgress?.progress_stage === "completed" ? stages.length : matchedStageOrder;
+                    const fallbackOrder = report.status === "Queued" || report.status === "Retrying" ? 0 : -1;
+                    const currentOrder = stageOrder >= 0 ? stageOrder : fallbackOrder;
+                    return (
+                      <li key={stage} className={index < currentOrder ? "is-complete" : index === currentOrder ? "is-active" : ""}>
+                        <span>{index < currentOrder ? "✓" : index + 1}</span>
+                        <strong>{label}</strong>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+              {report.status === "Retrying" && (
+                <p className="trajectory-retry-note">
+                  Попытка {taskProgress?.attempt_count || 1}. Повтор произойдёт автоматически.
+                </p>
+              )}
               <button className="secondary-button state-action" type="button" onClick={() => { window.location.hash = "upload"; }}>
                 Вернуться к загрузке
               </button>
@@ -1188,6 +840,7 @@ function App() {
 
       return (
         <CourseReportDetailPage
+          key={report.id}
           report={report}
           isEditingTitle={isEditingTitle}
           editTitleValue={editTitleValue}
@@ -1209,10 +862,7 @@ function App() {
       return (
         <StudentsPage
           reports={mockReports}
-          onNewAnalysis={() => {
-            resetUploadForm();
-            window.location.hash = "upload";
-          }}
+          onNewAnalysis={handleNewAnalysis}
         />
       );
     }
@@ -1228,6 +878,8 @@ function App() {
           onSidebarResizeStart={(event) => handleSidebarResizeStart("settings", event)}
           archivedReports={archivedReports}
           onUnarchiveReport={handleUnarchiveReport}
+          archiveLoadError={archiveLoadError}
+          onRetryArchive={fetchArchivedHistory}
         />
       );
     }
@@ -1249,6 +901,7 @@ function App() {
           onRegisterPasswordChange={setRegisterPassword}
           onSubmit={handleLoginSubmit}
           onClearError={() => setAuthError("")}
+          isSubmitting={isAuthSubmitting}
         />
       );
     }
@@ -1270,6 +923,7 @@ function App() {
           onRegisterPasswordChange={setRegisterPassword}
           onSubmit={handleRegisterSubmit}
           onClearError={() => setAuthError("")}
+          isSubmitting={isAuthSubmitting}
         />
       );
     }
@@ -1303,7 +957,7 @@ function App() {
       <>
         <AccessibilityToolbar settings={userSettings} onSettingsChange={handleSettingsChange} />
         <div className="auth-shell">
-          {renderActivePage()}
+          <Suspense fallback={pageLoadingFallback}>{renderActivePage()}</Suspense>
         </div>
         <ToastStack toasts={toasts} onDismiss={dismissToast} />
       </>
@@ -1314,7 +968,7 @@ function App() {
     return (
       <>
         <AccessibilityToolbar settings={userSettings} onSettingsChange={handleSettingsChange} />
-        {renderActivePage()}
+        <Suspense fallback={pageLoadingFallback}>{renderActivePage()}</Suspense>
         <ToastStack toasts={toasts} onDismiss={dismissToast} />
       </>
     );
@@ -1330,10 +984,7 @@ function App() {
         historyQuery={historyQuery}
         onHistoryQueryChange={setHistoryQuery}
         onArchiveReport={handleArchiveReport}
-        onNewAnalysis={() => {
-          resetUploadForm();
-          window.location.hash = "upload";
-        }}
+        onNewAnalysis={handleNewAnalysis}
         token={token}
         user={user}
         userEmail={userEmail}
@@ -1349,18 +1000,12 @@ function App() {
         isSidebarCollapsed={layoutPreferences.isMainSidebarCollapsed}
         onSidebarToggle={handleMainSidebarToggle}
         onSidebarResizeStart={(event) => handleSidebarResizeStart("main", event)}
+        historyLoadError={historyLoadError}
+        onRetryHistory={fetchHistory}
       >
-        {renderActivePage()}
+        <Suspense fallback={pageLoadingFallback}>{renderActivePage()}</Suspense>
       </AppLayout>
 
-      <NamingDialog
-        open={showNamingModal}
-        value={namingValue}
-        isSaving={isSavingName}
-        onChange={setNamingValue}
-        onSubmit={handleSaveReportName}
-        onSkip={handleSkipNaming}
-      />
       <ConfirmDialog
         open={!!archiveTargetId}
         title="Архивировать отчет?"

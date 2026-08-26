@@ -23,27 +23,30 @@ class AgentFactory:
         base_url: str = None
         agent_model: str = None
 
-        match model.lower():
-            case "deepseek":
-                api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip() or "sk-placeholder-deepseek"
-                base_url = (os.getenv("DEEPSEEK_BASE_URL") or "").strip() or "https://api.deepseek.com"
-                agent_model = (os.getenv("DEEPSEEK_MODEL") or "").strip() or "deepseek-chat"
-
-            case "gigachat" | "sbergpt":
-                api_key = (os.getenv("SBERGPT_API_KEY") or "").strip() or "sk-placeholder-sber"
-                base_url = (os.getenv("SBERGPT_BASE_URL") or "").strip() or "https://gigachat.devices.sberbank.ru/api/v1/"
-                agent_model = (os.getenv("SBERGPT_MODEL") or "").strip() or "GigaChat-Pro"
-
-            case "qwen_local" | "qwen" | "local":
-                # llama.cpp OpenAI-совместимый сервер
-                api_key = "not-needed"
-                base_url = (os.getenv("QWEN_LOCAL_URL") or "").strip() or "http://qwen-local:8080/v1"
-                agent_model = (os.getenv("QWEN_LOCAL_MODEL") or "").strip() or "local-model"
-
-            case _:
-                api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip() or "sk-placeholder-deepseek"
-                base_url = (os.getenv("DEEPSEEK_BASE_URL") or "").strip() or "https://api.deepseek.com"
-                agent_model = (os.getenv("DEEPSEEK_MODEL") or "").strip() or "deepseek-chat"
+        normalized_model = model.lower()
+        if normalized_model == "deepseek":
+            api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip() or "sk-placeholder-deepseek"
+            base_url = (os.getenv("DEEPSEEK_BASE_URL") or "").strip() or "https://api.deepseek.com"
+            agent_model = (os.getenv("DEEPSEEK_MODEL") or "").strip() or "deepseek-chat"
+            if api_key.startswith("sk-placeholder"):
+                raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek production mode")
+        elif normalized_model in ("gigachat", "sbergpt"):
+            api_key = (os.getenv("SBERGPT_API_KEY") or "").strip() or "sk-placeholder-sber"
+            base_url = (os.getenv("SBERGPT_BASE_URL") or "").strip() or "https://gigachat.devices.sberbank.ru/api/v1/"
+            agent_model = (os.getenv("SBERGPT_MODEL") or "").strip() or "GigaChat-Pro"
+            if api_key.startswith("sk-placeholder"):
+                raise ValueError("SBERGPT_API_KEY is required for GigaChat/SberGPT production mode")
+        elif normalized_model in ("qwen_local", "qwen", "local"):
+            # llama.cpp OpenAI-совместимый сервер
+            api_key = "not-needed"
+            base_url = (os.getenv("QWEN_LOCAL_URL") or "").strip() or "http://qwen-local:8080/v1"
+            agent_model = (os.getenv("QWEN_LOCAL_MODEL") or "").strip() or "local-model"
+        else:
+            api_key = (os.getenv("DEEPSEEK_API_KEY") or "").strip() or "sk-placeholder-deepseek"
+            base_url = (os.getenv("DEEPSEEK_BASE_URL") or "").strip() or "https://api.deepseek.com"
+            agent_model = (os.getenv("DEEPSEEK_MODEL") or "").strip() or "deepseek-chat"
+            if api_key.startswith("sk-placeholder"):
+                raise ValueError("DEEPSEEK_API_KEY is required for DeepSeek production mode")
 
         try:
             for specialization in self.SPECIALIZATIONS:

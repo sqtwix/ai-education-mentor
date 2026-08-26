@@ -1,36 +1,25 @@
-# React + Vite
+# Frontend ИИ-агента ИОТ
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React/Vite-интерфейс для формирования индивидуальной образовательной траектории: выбор профиля ГГС, история обучения, каталог программ, интерактивный roadmap и выгрузки PDF/XLSX/JSON.
 
-## Запуск без backend
+## Production-режим
 
-Frontend умеет работать в offline/demo-режиме без backend. В этом режиме авторизация, история отчетов, создание и редактирование отчетов работают локально через `localStorage`.
+По умолчанию frontend работает с backend API. Не включайте offline/demo для приемки или защиты.
 
-Для запуска dev-сервера:
+```bash
+npm test
+npm run lint
+npm run build
+```
+
+`VITE_API_URL` можно указать на этапе сборки, если API находится не на стандартном `/api/v1`.
+
+## Offline/demo только для разработки
+
+Offline-режим нужен для локальной проверки UI без backend. В этом режиме авторизация и история сохраняются в `localStorage`, а результат не является доказательством работы ИИ-агентов.
 
 ```bash
 VITE_OFFLINE_MODE=true npm run dev
 ```
 
-После запуска откройте адрес, который покажет Vite, обычно `http://127.0.0.1:5173`.
-
-Для production-сборки offline-режим тоже нужно включать на этапе сборки:
-
-```bash
-VITE_OFFLINE_MODE=true npm run build
-```
-
-Важно: переменные `VITE_*` встраиваются Vite во время build. Если используется Docker, передавайте `VITE_OFFLINE_MODE=true` как build arg/environment до сборки frontend-образа.
-
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Важно: переменные `VITE_*` встраиваются Vite во время build. Для production-сборки оставляйте `VITE_OFFLINE_MODE=false`.

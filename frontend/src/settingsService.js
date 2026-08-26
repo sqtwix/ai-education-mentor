@@ -1,6 +1,13 @@
-import { getUserSettings, saveUserSettings } from "./api";
+import { getUserSettings, saveUserSettings } from "./api.js";
 
 const SETTINGS_KEY = "educheck_user_settings";
+
+const getSettingsKey = () => {
+  const identity = String(localStorage.getItem("userEmail") || "guest")
+    .trim()
+    .toLocaleLowerCase("ru");
+  return `${SETTINGS_KEY}:${identity || "guest"}`;
+};
 
 export const defaultSettings = {
   theme: "system",
@@ -42,7 +49,7 @@ export function normalizeSettings(settings = {}) {
 
 export function readLocalSettings() {
   try {
-    const rawSettings = localStorage.getItem(SETTINGS_KEY);
+    const rawSettings = localStorage.getItem(getSettingsKey());
     return normalizeSettings(rawSettings ? JSON.parse(rawSettings) : defaultSettings);
   } catch {
     return defaultSettings;
@@ -54,7 +61,7 @@ export function writeLocalSettings(settings) {
     ...settings,
     updatedAt: settings.updatedAt || new Date().toISOString(),
   });
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(normalizedSettings));
+  localStorage.setItem(getSettingsKey(), JSON.stringify(normalizedSettings));
   return normalizedSettings;
 }
 

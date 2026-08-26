@@ -50,4 +50,12 @@ def setup_routes(agent_controller):
         description="Возвращает статистику востребованности и успешности курсов по должностям и ведомствам"
     )
 
+    router.add_api_route(
+        path="/progress/{request_id}",
+        endpoint=agent_controller.get_processing_progress,
+        methods=["GET"],
+        summary="Получить фактический этап обработки ИОТ",
+        description="Возвращает текущий этап внутреннего конвейера для активной задачи"
+    )
+
     return router

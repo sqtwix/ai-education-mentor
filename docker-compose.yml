@@ -3,21 +3,49 @@ services:
     build:
       context: ./api-core/ApiCore/ApiCore
     ports:
-      - "5000:5000"
+      - "127.0.0.1:${API_HOST_PORT:-5050}:5000"
+    volumes:
+      - dataprotection_keys:/var/lib/api-core/dataprotection-keys
     environment:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Host=${DB_HOST:-postgres};Port=${DB_PORT:-5432};Database=${DB_NAME:-aichecker};Username=${DB_USER:-aichecker_user};Password=${DB_PASSWORD:-aichecker_password}
-      - ConnectionStrings__Redis=redis:6379
-      - JwtSettings__Secret=${JWT_SECRET:-super_secret_jwt_key_aichecker_enterprise_2026!}
+      - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
+      - ConnectionStrings__DefaultConnection=Host=${DB_HOST:-postgres};Port=${DB_PORT:-5432};Database=${DB_NAME:-aichecker};Username=${DB_USER:-aichecker_user};Password=${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      - JwtSettings__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env}
       - JwtSettings__Issuer=${JWT_ISSUER:-ai-review-analyzer}
       - JwtSettings__Audience=${JWT_AUDIENCE:-ai-review-analyzer-frontend}
       - JwtSettings__ExpiryMinutes=${JWT_EXPIRY_MINUTES:-1440}
       - AiDriver__Url=http://ai-driver:8000
+      - AnalysisQueue__MaxAttempts=${ANALYSIS_QUEUE_MAX_ATTEMPTS:-5}
+      - UploadLimits__MaxFileBytes=${UPLOAD_MAX_FILE_BYTES:-26214400}
+      - UploadLimits__MaxRequestBytes=${UPLOAD_MAX_REQUEST_BYTES:-52428800}
+      - UploadLimits__MaxFileCount=${UPLOAD_MAX_FILE_COUNT:-20}
+      - UploadLimits__MaxArchiveEntries=${UPLOAD_MAX_ARCHIVE_ENTRIES:-100}
+      - UploadLimits__MaxArchiveUncompressedBytes=${UPLOAD_MAX_ARCHIVE_UNCOMPRESSED_BYTES:-104857600}
+      - UploadLimits__MaxArchiveCompressionRatio=${UPLOAD_MAX_ARCHIVE_COMPRESSION_RATIO:-100}
     depends_on:
       postgres:
         condition: service_healthy
+      ai-driver:
+        condition: service_healthy
     networks:
       - saas-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /app/temp_uploads:size=256m,mode=1777,uid=1654,gid=1654
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: [ "CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000; printf 'GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; head -n 1 <&3 | grep -q '200'" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   frontend:
     build:
@@ -25,21 +53,32 @@ services:
       args:
         VITE_OFFLINE_MODE: ${VITE_OFFLINE_MODE:-false}
     ports:
-      - "80:80"
+      - "${FRONTEND_PORT:-80}:80"
     depends_on:
-      - api-core
+      api-core:
+        condition: service_healthy
     networks:
       - saas-network
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--spider", "http://127.0.0.1/health" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
   postgres:
     image: postgres:15-alpine
-    container_name: aichecker-postgres
     environment:
       POSTGRES_DB: ${DB_NAME:-aichecker}
       POSTGRES_USER: ${DB_USER:-aichecker_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-aichecker_password}
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -49,12 +88,22 @@ services:
       retries: 10 # Сколько раз пытаться до того, как признать контейнер упавшим
     networks:
       - saas-network
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    restart: unless-stopped
 
   ai-driver:
     build:
       context: ./ai-driver
     ports:
-      - "8000:8000"
+      # Внутренний сервис остаётся доступен администратору на localhost,
+      # но не публикуется в локальную сеть в обход JWT-защищённого API Core.
+      - "127.0.0.1:8000:8000"
     environment:
       # DeepSeek конфигурация
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
@@ -67,24 +116,47 @@ services:
       # Локальная Qwen модель (llama.cpp)
       - QWEN_LOCAL_URL=http://qwen-local:8080/v1
       - QWEN_LOCAL_MODEL=${QWEN_LOCAL_MODEL:-local-model}
+      - QWEN_MODEL_FILE=${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}
+      - AI_MODEL_READINESS_TIMEOUT_SECONDS=${AI_MODEL_READINESS_TIMEOUT_SECONDS:-180}
+      - AI_MODEL_READINESS_POLL_SECONDS=${AI_MODEL_READINESS_POLL_SECONDS:-2}
+      - AI_CATALOG_CANDIDATE_LIMIT=${AI_CATALOG_CANDIDATE_LIMIT:-10}
+      - MIN_COHORT_SIZE=${MIN_COHORT_SIZE:-}
+      - PYTHONDONTWRITEBYTECODE=1
     depends_on:
       qwen-local:
         condition: service_started
-      redis:
-        condition: service_started
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks:
       - saas-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     restart: unless-stopped
 
   # Сервис с локальной моделью через llama.cpp
   qwen-local:
-    image: ghcr.io/ggml-org/llama.cpp:server
-    ports:
-      - "8001:8080"
+    # Immutable server build: a floating `server` tag can silently change
+    # inference behaviour between production deployments.
+    image: ghcr.io/ggml-org/llama.cpp@sha256:2e22fe614481e58c56ba665399b015fc8906a20203a20843e91c06e3fbed7e47
     volumes:
       - ./models:/models:ro
     command: >
-      -m /models/qwen2.5-0.5b-instruct-q8_0.gguf --host 0.0.0.0 --port 8080 -c 8192 --threads 4 -b 512 --alias local-model
+      -m /models/${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf} --host 0.0.0.0 --port 8080
+      -c ${QWEN_CONTEXT_SIZE:-4096} --threads ${QWEN_THREADS:-4} -b ${QWEN_BATCH_SIZE:-512}
+      -np ${QWEN_PARALLEL:-1} --cache-ram 0 --no-cache-prompt --no-cache-idle-slots
+      --metrics --alias ${QWEN_LOCAL_MODEL:-local-model}
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 10s
@@ -93,26 +165,18 @@ services:
       start_period: 30s
     networks:
       - saas-network
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis-data:/data
-    networks:
-      - saas-network
-    restart: unless-stopped
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 volumes:
-  redis-data:
   postgres_data:
+  dataprotection_keys:
 
 networks:
   saas-network:

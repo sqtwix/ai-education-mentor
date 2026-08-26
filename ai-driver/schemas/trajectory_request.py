@@ -5,36 +5,37 @@ from typing import List, Optional, Dict, Any
 
 class CourseHistoryItem(BaseModel):
     course_name: str
-    course_type: Optional[str] = "ППК"  # "ППК" или "ЭК"
-    status: Optional[str] = "Пройден"   # "Пройден", "Не пройден", "В процессе"
+    course_type: Optional[str] = None
+    status: str
 
 class EmployeeProfile(BaseModel):
-    fio: Optional[str] = "Служащий"
-    position: str = "Главный специалист"
-    department: str = "Администрация Губернатора Санкт-Петербурга"
-    experience_years: Optional[int] = 3
-    career_goal: Optional[str] = "Развитие управленческих и цифровых компетенций"
-    learning_history: List[CourseHistoryItem] = []
+    fio: str
+    position: str
+    department: str
+    experience_years: Optional[int] = None
+    career_goal: str
+    learning_history: List[CourseHistoryItem] = Field(default_factory=list)
 
 class CourseCatalogItem(BaseModel):
     id: str
     name: str
     type: str  # "ППК" или "ЭК"
-    category: Optional[str] = "Общее"
+    category: Optional[str] = None
     annotation: Optional[str] = ""
     target: Optional[str] = ""
     results: Optional[str] = ""
-    duration_hours: Optional[int] = 16
-    competencies: List[str] = []
+    duration_hours: Optional[int] = None
+    competencies: List[str] = Field(default_factory=list)
 
 class TrajectoryRequest(BaseModel):
-    request_id: Optional[str] = "req_1"
+    request_id: Optional[str] = None
+    model_type: Optional[str] = None
     employee: EmployeeProfile
     custom_catalog: Optional[List[CourseCatalogItem]] = None
-    target_stages_count: Optional[int] = 3
+    target_stages_count: Optional[int] = None
 
 # Для совместимости с предыдущими вызовами
 class CourseBatchAnalysisRequest(BaseModel):
-    batch_id: Optional[str] = "batch_1"
+    batch_id: Optional[str] = None
     employee: Optional[EmployeeProfile] = None
     courses: Optional[List[Any]] = None

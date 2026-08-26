@@ -59,9 +59,9 @@ export async function exportReportToPdf(report) {
 
   const traj = report.result?.trajectory || report.result?.courses_analysis?.[0] || report.result || {};
   const exportDate = formatExportDate();
-  const empName = traj.employee_name || "Служащий";
-  const position = traj.position || "Главный специалист";
-  const dept = traj.department || "ИОГВ Санкт-Петербурга";
+  const empName = traj.employee_name || "Не указано";
+  const position = traj.position || "Не указано";
+  const dept = traj.department || "Не указано";
 
   // Header Banner
   doc.setFillColor(...SOFT_BLUE);
@@ -116,10 +116,10 @@ export async function exportReportToPdf(report) {
 
     const tableRows = (stage.courses || []).map((c) => [
       c.course_name,
-      c.type || "ППК",
-      `${c.duration_hours || 16} ч.`,
+      c.type || "Не указан",
+      c.duration_hours ? `${c.duration_hours} ч.` : "Не указано",
       (c.competencies || []).join(", "),
-      c.justification || "Рекомендован для развития профессиональных навыков."
+      c.justification || "Не указано"
     ]);
 
     autoTable(doc, {
@@ -156,9 +156,9 @@ export async function exportReportToPdf(report) {
 
     const radarRows = radar.map((r) => [
       r.competency,
-      `${r.current_level || 40}%`,
-      `${r.target_level || 85}%`,
-      `+${r.growth || 45}%`
+      r.current_level === undefined || r.current_level === null ? "Не указано" : `${r.current_level}%`,
+      r.target_level === undefined || r.target_level === null ? "Не указано" : `${r.target_level}%`,
+      r.growth === undefined || r.growth === null ? "Не указано" : `${r.growth >= 0 ? "+" : ""}${r.growth}%`
     ]);
 
     autoTable(doc, {
@@ -182,9 +182,8 @@ export async function exportReportToExcel(report) {
   workbook.created = new Date();
 
   const traj = report.result?.trajectory || report.result?.courses_analysis?.[0] || report.result || {};
-  const empName = traj.employee_name || "Служащий";
-  const position = traj.position || "Главный специалист";
-  const dept = traj.department || "ИОГВ Санкт-Петербурга";
+  const empName = traj.employee_name || "Не указано";
+  const position = traj.position || "Не указано";
 
   // Лист 1: Траектория обучения
   const sheet1 = workbook.addWorksheet("Индивидуальная траектория");
@@ -215,7 +214,7 @@ export async function exportReportToExcel(report) {
         hours: c.duration_hours,
         competencies: (c.competencies || []).join(", "),
         priority: c.priority,
-        status: c.status || "Рекомендован",
+        status: c.status || "Не указан",
         justification: c.justification,
       });
     }
@@ -258,8 +257,8 @@ export async function exportReportToExcel(report) {
     sheet3.addRow({
       course_name: b.course_name,
       type: b.type,
-      popularity: `${b.popularity_pct}%`,
-      success: `${b.success_rate || 100}%`,
+      popularity: b.popularity_pct === undefined || b.popularity_pct === null ? "Не указано" : `${b.popularity_pct}%`,
+      success: b.success_rate === undefined || b.success_rate === null ? "Не указано" : `${b.success_rate}%`,
     });
   }
 
@@ -275,8 +274,8 @@ export async function exportReportToExcel(report) {
 
 export function exportReportToJson(report) {
   const traj = report.result?.trajectory || report.result || {};
-  const empName = traj.employee_name || "Служащий";
-  const jsonStr = JSON.stringify(report.result || report, null, 2);
+  const empName = traj.employee_name || "Не указано";
+  const jsonStr = JSON.stringify(traj, null, 2);
   const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -287,6 +286,3 @@ export function exportReportToJson(report) {
 }
 
 export const exportReportToXlsx = exportReportToExcel;
-export const exportReportToDocx = exportReportToPdf;
-export const exportReportToCsv = exportReportToExcel;
-

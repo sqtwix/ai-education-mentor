@@ -25,11 +25,6 @@ public class AppDbContext : DbContext
         // Настраиваем правила для сущности User в PostgreSQL
         modelBuilder.Entity<User>(entity =>
         {
-            // Делаем колонку email уникальной на уровне СУБД
-            entity.HasIndex(u => u.Email)
-                .IsUnique()
-                .HasDatabaseName("ix_users_email");
-
             entity.Property(u => u.SettingsJson)
                 .HasColumnType("jsonb");
         });
@@ -39,8 +34,19 @@ public class AppDbContext : DbContext
         {
             entity.Property(r => r.ResultJson)
                 .HasColumnType("jsonb");
+            entity.Property(r => r.CheckpointJson)
+                .HasColumnType("jsonb");
+            entity.Property(r => r.PayloadJson)
+                .HasColumnType("jsonb");
             entity.HasIndex(r => r.UserId)
                 .HasDatabaseName("ix_analysis_reports_user_id");
+            entity.HasIndex(r => new { r.Status, r.NextRetryAt, r.CreatedAt })
+                .HasDatabaseName("ix_analysis_reports_queue");
+            entity.HasOne<User>()
+                .WithMany()
+                .HasForeignKey(r => r.UserId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("fk_analysis_reports_users");
         });
     }
 }

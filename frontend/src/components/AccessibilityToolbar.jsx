@@ -56,6 +56,7 @@ export function AccessibilityToolbar({ settings, onSettingsChange }) {
               type="button"
               className={`accessibility-tool-button font-size-${index + 1} ${accessibility.fontSize === option.value ? "active" : ""}`}
               aria-pressed={accessibility.fontSize === option.value}
+              aria-label={option.title}
               title={option.title}
               onClick={() => updateAccessibility({ fontSize: option.value })}
             >
@@ -72,6 +73,7 @@ export function AccessibilityToolbar({ settings, onSettingsChange }) {
               type="button"
               className={`accessibility-tool-button color-scheme-${option.value} ${accessibility.colorScheme === option.value ? "active" : ""}`}
               aria-pressed={accessibility.colorScheme === option.value}
+              aria-label={option.title}
               title={option.title}
               onClick={() => updateAccessibility({ colorScheme: option.value })}
             >

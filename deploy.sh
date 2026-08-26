@@ -8,55 +8,81 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 # 1. Environment configuration setup
-if [ ! -f ".env" ]; then
-    if [ -f "env_example.txt" ]; then
-        echo "--> Creating .env from env_example.txt..."
-        cp env_example.txt .env
-    else
-        echo "--> Creating default .env file..."
-        cat <<EOT > .env
-DB_HOST=postgres
-DB_PORT=5432
-DB_NAME=aichecker
-DB_USER=aichecker_user
-DB_PASSWORD=aichecker_password
-JWT_SECRET=super_secret_jwt_key_aichecker_enterprise_2026!
-JWT_ISSUER=ai-education-mentor
-JWT_AUDIENCE=ai-education-mentor-frontend
-JWT_EXPIRY_MINUTES=1440
-DEEPSEEK_API_KEY=
-SBERGPT_API_KEY=
-VITE_OFFLINE_MODE=false
-EOT
-    fi
-else
-    echo "--> Existing .env file found."
+FRONTEND_PORT="${FRONTEND_PORT:-80}" scripts/init_env.sh
+
+while IFS='=' read -r key value; do
+    value="${value%$'\r'}"
+    case "$key" in
+        DB_PASSWORD|JWT_SECRET|QWEN_MODEL_FILE|QWEN_MODEL_URL|QWEN_MODEL_SHA256|FRONTEND_PORT|API_HOST_PORT)
+            printf -v "$key" '%s' "$value"
+            ;;
+    esac
+done < .env
+
+if [ -z "${DB_PASSWORD:-}" ] || [ "$DB_PASSWORD" = "CHANGE_ME_STRONG_DATABASE_PASSWORD" ]; then
+    echo "ERROR: Set a unique DB_PASSWORD in .env and rerun deploy.sh."
+    exit 1
+fi
+if [ -z "${JWT_SECRET:-}" ] || [ "$JWT_SECRET" = "CHANGE_ME_MINIMUM_32_RANDOM_CHARACTERS" ] || [ "${#JWT_SECRET}" -lt 32 ]; then
+    echo "ERROR: Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.sh."
+    exit 1
 fi
 
-# 2. Local AI Model Download (Qwen 2.5 GGUF)
+# 2. Local AI Model Download (Qwen3 GGUF)
 mkdir -p models
-MODEL_FILE="qwen2.5-0.5b-instruct-q8_0.gguf"
+MODEL_FILE="${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}"
+MODEL_URL="${QWEN_MODEL_URL:-https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf}"
 MODEL_PATH="models/$MODEL_FILE"
 
 if [ ! -f "$MODEL_PATH" ]; then
-    echo "--> Downloading local Qwen2.5 GGUF model ($MODEL_FILE)..."
-    curl -L -o "$MODEL_PATH" "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf"
+    echo "--> Downloading local Qwen3 GGUF model ($MODEL_FILE)..."
+    curl -L -o "$MODEL_PATH" "$MODEL_URL"
     echo "--> Model downloaded successfully."
 else
     echo "--> Local GGUF model already exists in ./models, skipping download."
 fi
 
-# 3. Docker Container Deployment
-echo "--> Starting Docker containers..."
-docker compose down 2>/dev/null || true
-docker compose up --build -d
+if [ -z "${QWEN_MODEL_SHA256:-}" ] || ! [[ "$QWEN_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR: QWEN_MODEL_SHA256 must contain the approved 64-character SHA256." >&2
+    exit 1
+fi
 
-echo "--> Cleaning up dangling Docker images..."
-docker image prune -f 2>/dev/null || true
+echo "--> Verifying Qwen model SHA256..."
+ACTUAL_SHA="$(shasum -a 256 "$MODEL_PATH" | awk '{print $1}')"
+ACTUAL_SHA_NORMALIZED="$(printf '%s' "$ACTUAL_SHA" | tr '[:upper:]' '[:lower:]')"
+EXPECTED_SHA_NORMALIZED="$(printf '%s' "$QWEN_MODEL_SHA256" | tr '[:upper:]' '[:lower:]')"
+if [ "$ACTUAL_SHA_NORMALIZED" != "$EXPECTED_SHA_NORMALIZED" ]; then
+    echo "ERROR: Qwen model checksum mismatch."
+    echo "Expected: $QWEN_MODEL_SHA256"
+    echo "Actual:   $ACTUAL_SHA"
+    exit 1
+fi
+
+# 3. Docker Container Deployment
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+else
+    echo "ERROR: Docker Compose is not installed." >&2
+    exit 1
+fi
+
+echo "--> Building production images..."
+"${COMPOSE[@]}" build
+
+# Previous releases created the DataProtection volume while API Core ran as
+# root. Migrate only this dedicated volume before starting the non-root image.
+echo "--> Preparing persistent DataProtection key permissions..."
+"${COMPOSE[@]}" run --rm --no-deps --user root --entrypoint /bin/sh api-core \
+    -c 'mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys'
+
+echo "--> Starting Docker containers..."
+"${COMPOSE[@]}" up --no-build -d --remove-orphans
 
 echo "=================================================="
 echo "DEPLOYMENT SUCCESSFUL!"
-echo "Open application in browser: http://localhost/"
-echo "Backend Swagger API:        http://localhost:5000/swagger"
+echo "Open application in browser: http://localhost:${FRONTEND_PORT:-80}/"
+echo "Backend Swagger API:        http://127.0.0.1:${API_HOST_PORT:-5050}/swagger"
 echo "AI-Driver FastAPI Docs:     http://localhost:8000/docs"
 echo "=================================================="

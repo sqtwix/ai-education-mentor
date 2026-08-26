@@ -130,7 +130,7 @@ export function buildCourseReportViewModel(report) {
     reportData,
     textAnalysis,
     dashboardData,
-    courseName: courseAnalysis?.course_name || report?.course || "Электронный курс",
+    courseName: courseAnalysis?.course_name || report?.course || "Индивидуальная траектория",
     period: courseAnalysis?.period || "Не указан",
     studentsCount: toNumber(courseAnalysis?.students_count),
     positionDistribution: courseAnalysis?.position_distribution || {},

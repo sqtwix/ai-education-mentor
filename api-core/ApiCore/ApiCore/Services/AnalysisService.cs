@@ -1,234 +1,279 @@
+using System.Text;
+using System.Text.Json;
 using ApiCore.Data;
 using ApiCore.Models;
-using System.Collections.Concurrent;
-using System.Text.Json;
-using System.IO.Compression;
-using System.Text;
 
 namespace ApiCore.Services;
 
-public class AnalysisService
+public sealed class AnalysisService
 {
+    private const int DefaultMaxAttempts = 5;
+
     private readonly AppDbContext _dbContext;
     private readonly HttpClient _httpClient;
-    private readonly FileParser _fileParser;
     private readonly ILogger<AnalysisService> _logger;
-
-    public static readonly ConcurrentDictionary<string, (string Status, object? Result, string? Error)> TaskTracker = new();
+    private readonly int _maxAttempts;
 
     public AnalysisService(
         AppDbContext dbContext,
         HttpClient httpClient,
-        FileParser fileParser,
-        ILogger<AnalysisService> logger)
+        ILogger<AnalysisService> logger,
+        IConfiguration configuration)
     {
         _dbContext = dbContext;
         _httpClient = httpClient;
-        _fileParser = fileParser;
         _logger = logger;
+        _maxAttempts = configuration.GetValue<int?>("AnalysisQueue:MaxAttempts") is >= 1 and <= 10
+            ? configuration.GetValue<int>("AnalysisQueue:MaxAttempts")
+            : DefaultMaxAttempts;
     }
 
-    public async Task ProcessTrajectoryAsync(string taskId, Guid userId, EmployeeProfileDto employee, string modelType)
+    public async Task ProcessQueuedJobAsync(string taskId, CancellationToken cancellationToken)
     {
-        _logger.LogInformation($"[Task {taskId}] Запуск генерации ИОТ для {employee.Fio} ({employee.Position}) через {modelType}");
-        TaskTracker[taskId] = ("Processing", null, null);
-
-        var report = await _dbContext.AnalysisReports.FindAsync(taskId);
+        var report = await _dbContext.AnalysisReports.FindAsync([taskId], cancellationToken);
+        if (report == null)
+        {
+            _logger.LogWarning("Задача {TaskId} исчезла после получения из очереди", taskId);
+            return;
+        }
 
         try
         {
-            var requestPayload = new
+            if (string.IsNullOrWhiteSpace(report.PayloadJson) || string.IsNullOrWhiteSpace(report.ModelType))
             {
-                request_id = taskId,
-                employee = new
-                {
-                    fio = employee.Fio,
-                    position = employee.Position,
-                    department = employee.Department,
-                    experience_years = employee.ExperienceYears,
-                    career_goal = employee.CareerGoal,
-                    learning_history = employee.LearningHistory?.Select(h => new
-                    {
-                        course_name = h.CourseName,
-                        course_type = h.CourseType,
-                        status = h.Status
-                    }).ToList()
-                },
-                model_type = modelType.ToLowerInvariant()
-            };
-
-            string endpoint = modelType.ToLowerInvariant() switch
-            {
-                "sbergpt" or "gigachat" => "/agents/get_sbergpt_data_analysis",
-                "qwen_local" => "/agents/get_qwen_local_data_analysis",
-                _ => "/agents/get_deepseek_data_analysis"
-            };
-
-            var jsonContent = new StringContent(
-                JsonSerializer.Serialize(requestPayload),
-                Encoding.UTF8,
-                "application/json"
-            );
-
-            _logger.LogInformation($"[Task {taskId}] Отправка запроса в ai-driver: {endpoint}");
-            var response = await _httpClient.PostAsync(endpoint, jsonContent);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorText = await response.Content.ReadAsStringAsync();
-                throw new Exception($"ai-driver вернул ошибку ({response.StatusCode}): {errorText}");
+                throw new InvalidDataException("Задача не содержит сохраненного входного профиля или модели.");
             }
 
-            var responseJson = await response.Content.ReadAsStringAsync();
-            var resultDoc = JsonSerializer.Deserialize<JsonElement>(responseJson);
-
-            TaskTracker[taskId] = ("Completed", resultDoc, null);
-
-            if (report != null)
+            var payload = JsonSerializer.Deserialize<QueuedAnalysisPayload>(
+                report.PayloadJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (payload?.Employees == null || payload.Employees.Count == 0)
             {
-                report.Status = "Completed";
-                report.ResultJson = responseJson;
-                await _dbContext.SaveChangesAsync();
+                throw new InvalidDataException("Задача не содержит профилей для обработки.");
             }
 
-            _logger.LogInformation($"[Task {taskId}] Генерация ИОТ успешно завершена.");
+            var result = await ProcessEmployeesAsync(report, payload.Employees, report.ModelType, cancellationToken);
+            report.Status = result.Status;
+            report.ResultJson = result.ResultJson;
+            report.CheckpointJson = null;
+            report.Error = null;
+            report.NextRetryAt = null;
+            report.UpdatedAt = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Задача {TaskId} завершена со статусом {Status}", taskId, result.Status);
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            _logger.LogError($"[Task {taskId}] Ошибка при генерации ИОТ: {ex.Message}");
-            TaskTracker[taskId] = ("Failed", null, ex.Message);
+            // Остановка приложения не является неудачной попыткой: входные данные
+            // уже сохранены, и задача должна продолжиться после следующего запуска.
+            report.AttemptCount = Math.Max(0, report.AttemptCount - 1);
+            report.Status = "Retrying";
+            report.Error = "Обработка прервана остановкой worker и будет продолжена после запуска.";
+            report.NextRetryAt = DateTime.UtcNow;
+            report.UpdatedAt = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "Ошибка обработки задачи ИОТ {TaskId}, попытка {Attempt}", taskId, report.AttemptCount);
+            report.ResultJson = null;
+            report.UpdatedAt = DateTime.UtcNow;
 
-            if (report != null)
+            if (report.AttemptCount < _maxAttempts && exception is not InvalidDataException)
+            {
+                report.Status = "Retrying";
+                report.Error = "Сервис ИИ временно недоступен. Задача ожидает повторной попытки.";
+                report.NextRetryAt = DateTime.UtcNow.AddSeconds(Math.Min(30, report.AttemptCount * 5));
+            }
+            else
             {
                 report.Status = "Failed";
-                report.Error = ex.Message;
-                await _dbContext.SaveChangesAsync();
+                report.Error = exception is InvalidDataException
+                    ? exception.Message
+                    : "Не удалось сформировать траекторию после повторных попыток. Проверьте выбранную модель и повторите запуск.";
+                report.NextRetryAt = null;
             }
+
+            await _dbContext.SaveChangesAsync(CancellationToken.None);
         }
     }
 
-    public async Task ProcessAnalysisAsync(string taskId, Guid userId, List<string> filePaths, string modelType, string tempDir)
+    private async Task<ProcessingResult> ProcessEmployeesAsync(
+        AnalysisReport report,
+        IReadOnlyList<EmployeeProfileDto> employees,
+        string modelType,
+        CancellationToken cancellationToken)
     {
-        _logger.LogInformation($"[Task {taskId}] Начало обработки файлов пакета.");
-        TaskTracker[taskId] = ("Processing", null, null);
+        if (employees.Count == 1)
+        {
+            var responseJson = await RequestTrajectoryAsync(report.Id, employees[0], modelType, cancellationToken);
+            var root = JsonSerializer.Deserialize<JsonElement>(responseJson);
+            ValidateAiResponse(root);
+            return new ProcessingResult(GetCompletionStatus(root), responseJson);
+        }
 
-        var report = await _dbContext.AnalysisReports.FindAsync(taskId);
+        var checkpoint = ReadCheckpoint(report, employees.Count);
+        var trajectories = checkpoint.Trajectories;
+        var degraded = checkpoint.Degraded;
 
+        for (var index = checkpoint.NextEmployeeIndex; index < employees.Count; index++)
+        {
+            var responseJson = await RequestTrajectoryAsync(report.Id, employees[index], modelType, cancellationToken);
+            var root = JsonSerializer.Deserialize<JsonElement>(responseJson);
+            ValidateAiResponse(root);
+
+            if (root.TryGetProperty("quality_status", out var quality) &&
+                string.Equals(quality.GetString(), "degraded", StringComparison.OrdinalIgnoreCase))
+            {
+                degraded = true;
+            }
+
+            trajectories.Add(root.GetProperty("trajectory").Clone());
+            report.CheckpointJson = JsonSerializer.Serialize(new BatchProcessingCheckpoint
+            {
+                NextEmployeeIndex = index + 1,
+                Degraded = degraded,
+                Trajectories = trajectories
+            });
+            report.UpdatedAt = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        var combinedResult = new
+        {
+            batch_id = report.Id,
+            total_profiles_processed = trajectories.Count,
+            batch_selection_required = true,
+            batch_limit = employees.Count,
+            generation_mode = degraded ? "fallback" : "llm",
+            quality_status = degraded ? "degraded" : "verified",
+            trajectory = (object?)null,
+            courses_analysis = trajectories
+        };
+
+        return new ProcessingResult(
+            degraded ? "CompletedWithLimitations" : "Completed",
+            JsonSerializer.Serialize(combinedResult));
+    }
+
+    private static BatchProcessingCheckpoint ReadCheckpoint(AnalysisReport report, int employeeCount)
+    {
+        if (string.IsNullOrWhiteSpace(report.CheckpointJson)) return new BatchProcessingCheckpoint();
+
+        BatchProcessingCheckpoint? checkpoint;
         try
         {
-            // 0. Распаковка архивов и чтение всех файлов
-            var users = _fileParser.ParseHistoryFiles(filePaths);
-
-            if (users.Count == 0)
-            {
-                // Если не найдено пользователей, создаем типовой профиль ГГС
-                users.Add(new EmployeeProfileDto
-                {
-                    Fio = "Государственный гражданский служащий",
-                    Position = "Главный специалист",
-                    Department = "Администрация Губернатора Санкт-Петербурга",
-                    ExperienceYears = 3,
-                    CareerGoal = "Развитие управленческих и цифровых компетенций в сфере госуправления"
-                });
-            }
-
-            // Обрабатываем пользователей: если передан 1 пользователь - генерируем для него, если несколько - генерируем для всех (до 15 за раз)
-            var generatedTrajectories = new List<JsonElement>();
-
-            int batchLimit = Math.Min(users.Count, 15);
-            for (int i = 0; i < batchLimit; i++)
-            {
-                var emp = users[i];
-                string singleTaskId = i == 0 ? taskId : $"{taskId}_user_{i + 1}";
-
-                var requestPayload = new
-                {
-                    request_id = singleTaskId,
-                    employee = new
-                    {
-                        fio = emp.Fio,
-                        position = emp.Position,
-                        department = emp.Department,
-                        experience_years = emp.ExperienceYears,
-                        career_goal = emp.CareerGoal,
-                        learning_history = emp.LearningHistory?.Select(h => new
-                        {
-                            course_name = h.CourseName,
-                            course_type = h.CourseType,
-                            status = h.Status
-                        }).ToList()
-                    },
-                    model_type = modelType.ToLowerInvariant()
-                };
-
-                string endpoint = modelType.ToLowerInvariant() switch
-                {
-                    "sbergpt" or "gigachat" => "/agents/get_sbergpt_data_analysis",
-                    "qwen_local" => "/agents/get_qwen_local_data_analysis",
-                    _ => "/agents/get_deepseek_data_analysis"
-                };
-
-                var jsonContent = new StringContent(
-                    JsonSerializer.Serialize(requestPayload),
-                    Encoding.UTF8,
-                    "application/json"
-                );
-
-                var response = await _httpClient.PostAsync(endpoint, jsonContent);
-                if (response.IsSuccessStatusCode)
-                {
-                    var respStr = await response.Content.ReadAsStringAsync();
-                    var respDoc = JsonSerializer.Deserialize<JsonElement>(respStr);
-                    if (respDoc.TryGetProperty("trajectory", out var trajProp))
-                    {
-                        generatedTrajectories.Add(trajProp);
-                    }
-                    else
-                    {
-                        generatedTrajectories.Add(respDoc);
-                    }
-                }
-            }
-
-            var primaryResult = generatedTrajectories.FirstOrDefault();
-            var combinedResult = new
-            {
-                batch_id = taskId,
-                total_profiles_processed = generatedTrajectories.Count,
-                trajectory = primaryResult,
-                courses_analysis = generatedTrajectories
-            };
-
-            var finalResultElement = JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(combinedResult));
-            TaskTracker[taskId] = ("Completed", finalResultElement, null);
-
-            if (report != null)
-            {
-                report.Status = "Completed";
-                report.ResultJson = JsonSerializer.Serialize(combinedResult);
-                await _dbContext.SaveChangesAsync();
-            }
-
-            _logger.LogInformation($"[Task {taskId}] Пакетная обработка {generatedTrajectories.Count} профилей успешно завершена.");
+            checkpoint = JsonSerializer.Deserialize<BatchProcessingCheckpoint>(
+                report.CheckpointJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         }
-        catch (Exception ex)
+        catch (JsonException exception)
         {
-            _logger.LogError($"[Task {taskId}] Ошибка при обработке файлов: {ex.Message}");
-            TaskTracker[taskId] = ("Failed", null, ex.Message);
-
-            if (report != null)
-            {
-                report.Status = "Failed";
-                report.Error = ex.Message;
-                await _dbContext.SaveChangesAsync();
-            }
+            throw new InvalidDataException("Сохраненная контрольная точка пакетной задачи повреждена.", exception);
         }
-        finally
+
+        if (checkpoint == null ||
+            checkpoint.NextEmployeeIndex < 0 ||
+            checkpoint.NextEmployeeIndex > employeeCount ||
+            checkpoint.Trajectories.Count != checkpoint.NextEmployeeIndex)
         {
-            if (Directory.Exists(tempDir))
+            throw new InvalidDataException("Сохраненная контрольная точка пакетной задачи не соответствует входным профилям.");
+        }
+
+        return checkpoint;
+    }
+
+    private async Task<string> RequestTrajectoryAsync(
+        string requestId,
+        EmployeeProfileDto employee,
+        string modelType,
+        CancellationToken cancellationToken)
+    {
+        var requestPayload = new
+        {
+            request_id = requestId,
+            employee = new
             {
-                try { Directory.Delete(tempDir, true); } catch { /* ignore */ }
-            }
+                fio = employee.Fio,
+                position = employee.Position,
+                department = employee.Department,
+                experience_years = employee.ExperienceYears,
+                career_goal = employee.CareerGoal,
+                learning_history = employee.LearningHistory.Select(history => new
+                {
+                    course_name = history.CourseName,
+                    course_type = history.CourseType,
+                    status = history.Status
+                })
+            },
+            model_type = modelType
+        };
+
+        using var content = new StringContent(
+            JsonSerializer.Serialize(requestPayload),
+            Encoding.UTF8,
+            "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, GetEndpoint(modelType))
+        {
+            Content = content
+        };
+        request.Headers.TryAddWithoutValidation("X-Correlation-ID", requestId);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"ai-driver returned HTTP {(int)response.StatusCode}");
+        }
+
+        return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    private static void ValidateAiResponse(JsonElement root)
+    {
+        if (root.TryGetProperty("quality_status", out var quality) &&
+            string.Equals(quality.GetString(), "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Сервис ИИ вернул неуспешный результат.");
+        }
+
+        if (!root.TryGetProperty("trajectory", out var trajectory) ||
+            trajectory.ValueKind != JsonValueKind.Object ||
+            !trajectory.TryGetProperty("stages", out var stages) ||
+            stages.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Сервис ИИ вернул некорректную структуру траектории.");
         }
     }
+
+    private static string GetEndpoint(string modelType) => modelType switch
+    {
+        "sbergpt" => "/agents/get_sbergpt_data_analysis",
+        "qwen_local" => "/agents/get_qwen_local_data_analysis",
+        _ => "/agents/get_deepseek_data_analysis"
+    };
+
+    private static string GetCompletionStatus(JsonElement result)
+    {
+        if (result.TryGetProperty("quality_status", out var quality) &&
+            string.Equals(quality.GetString(), "degraded", StringComparison.OrdinalIgnoreCase))
+        {
+            return "CompletedWithLimitations";
+        }
+
+        return "Completed";
+    }
+
+    private sealed record ProcessingResult(string Status, string ResultJson);
+}
+
+public sealed class QueuedAnalysisPayload
+{
+    public List<EmployeeProfileDto> Employees { get; set; } = [];
+}
+
+public sealed class BatchProcessingCheckpoint
+{
+    public int NextEmployeeIndex { get; set; }
+    public bool Degraded { get; set; }
+    public List<JsonElement> Trajectories { get; set; } = [];
 }

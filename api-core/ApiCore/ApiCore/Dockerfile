@@ -16,8 +16,12 @@ RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
+RUN mkdir -p /var/lib/api-core/dataprotection-keys \
+    && chown -R app:app /var/lib/api-core
+COPY --from=publish --chown=app:app /app/publish .
 
 ENV ASPNETCORE_URLS=http://+:5000
+
+USER app
 
 ENTRYPOINT ["dotnet", "ApiCore.dll"]

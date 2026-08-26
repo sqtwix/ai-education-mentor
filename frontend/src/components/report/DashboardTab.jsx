@@ -1,14 +1,9 @@
 import React from "react";
-import { TrendingUp, BarChart3, PieChart, Activity, Layers } from "lucide-react";
+import { TrendingUp, PieChart, Layers } from "lucide-react";
 
 const formatNumber = (value, digits = 1) => {
   const number = Number(value);
   return Number.isFinite(number) ? number.toFixed(digits) : "-";
-};
-
-const formatPercent = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${number.toFixed(0)}%` : "-";
 };
 
 function EmptyChartState({ title, message }) {

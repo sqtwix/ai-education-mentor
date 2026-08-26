@@ -17,19 +17,19 @@ public class TrajectoryGenerateRequest
 public class EmployeeProfileDto
 {
     [JsonPropertyName("fio")]
-    public string Fio { get; set; } = "Государственный служащий";
+    public string Fio { get; set; } = string.Empty;
 
     [JsonPropertyName("position")]
-    public string Position { get; set; } = "Главный специалист";
+    public string Position { get; set; } = string.Empty;
 
     [JsonPropertyName("department")]
-    public string Department { get; set; } = "Администрация Губернатора Санкт-Петербурга";
+    public string Department { get; set; } = string.Empty;
 
     [JsonPropertyName("experience_years")]
-    public int ExperienceYears { get; set; } = 3;
+    public int ExperienceYears { get; set; }
 
     [JsonPropertyName("career_goal")]
-    public string CareerGoal { get; set; } = "Развитие управленческих и цифровых компетенций";
+    public string CareerGoal { get; set; } = string.Empty;
 
     [JsonPropertyName("learning_history")]
     public List<CourseHistoryItemDto> LearningHistory { get; set; } = new();
@@ -41,10 +41,10 @@ public class CourseHistoryItemDto
     public string CourseName { get; set; } = string.Empty;
 
     [JsonPropertyName("course_type")]
-    public string CourseType { get; set; } = "ППК";
+    public string CourseType { get; set; } = string.Empty;
 
     [JsonPropertyName("status")]
-    public string Status { get; set; } = "Пройден";
+    public string Status { get; set; } = string.Empty;
 }
 
 public class CourseCatalogItemDto
@@ -56,7 +56,7 @@ public class CourseCatalogItemDto
     public string Name { get; set; } = string.Empty;
 
     [JsonPropertyName("type")]
-    public string Type { get; set; } = "ППК";
+    public string Type { get; set; } = string.Empty;
 
     [JsonPropertyName("category")]
     public string Category { get; set; } = string.Empty;
@@ -71,7 +71,7 @@ public class CourseCatalogItemDto
     public string Results { get; set; } = string.Empty;
 
     [JsonPropertyName("duration_hours")]
-    public int DurationHours { get; set; } = 16;
+    public int DurationHours { get; set; }
 
     [JsonPropertyName("competencies")]
     public List<string> Competencies { get; set; } = new();

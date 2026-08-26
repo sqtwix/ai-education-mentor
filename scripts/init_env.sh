@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_DIR/.env"
+ENV_TEMPLATE="$REPO_DIR/env_example.txt"
+
+if [ -f "$ENV_FILE" ]; then
+    echo "--> Existing .env file found; nothing changed."
+    exit 0
+fi
+
+if [ ! -f "$ENV_TEMPLATE" ]; then
+    echo "ERROR: env_example.txt was not found." >&2
+    exit 1
+fi
+
+random_hex() {
+    local byte_count="$1"
+    od -An -N "$byte_count" -tx1 /dev/urandom | tr -d ' \n'
+}
+
+db_password=""
+jwt_secret=""
+credentials_source="generated"
+
+# If the project is already running, preserve the credentials stored in the
+# API container. This prevents an existing PostgreSQL volume from becoming
+# inaccessible when a previously missing .env file is restored.
+if command -v docker >/dev/null 2>&1; then
+    project_name="${COMPOSE_PROJECT_NAME:-$(basename "$REPO_DIR")}"
+    api_container="$(docker ps \
+        --filter "label=com.docker.compose.project=$project_name" \
+        --filter "label=com.docker.compose.service=api-core" \
+        --format '{{.ID}}' 2>/dev/null | head -n 1 || true)"
+
+    if [ -n "$api_container" ]; then
+        runtime_env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$api_container" 2>/dev/null || true)"
+        runtime_connection="$(printf '%s\n' "$runtime_env" | sed -n 's/^ConnectionStrings__DefaultConnection=//p' | head -n 1)"
+        jwt_secret="$(printf '%s\n' "$runtime_env" | sed -n 's/^JwtSettings__Secret=//p' | head -n 1)"
+
+        if [[ "$runtime_connection" == *"Password="* ]]; then
+            db_password="${runtime_connection##*Password=}"
+            db_password="${db_password%%;*}"
+        fi
+
+        if [ -n "$db_password" ] && [ "${#jwt_secret}" -ge 32 ]; then
+            credentials_source="running containers"
+        else
+            db_password=""
+            jwt_secret=""
+        fi
+    fi
+fi
+
+if [ -z "$db_password" ]; then
+    db_password="$(random_hex 32)"
+fi
+if [ "${#jwt_secret}" -lt 32 ]; then
+    jwt_secret="$(random_hex 48)"
+fi
+
+frontend_port="${FRONTEND_PORT:-80}"
+if ! [[ "$frontend_port" =~ ^[0-9]+$ ]] || [ "$frontend_port" -lt 1 ] || [ "$frontend_port" -gt 65535 ]; then
+    echo "ERROR: FRONTEND_PORT must be an integer from 1 to 65535." >&2
+    exit 1
+fi
+
+umask 077
+temporary_env="$(mktemp "$REPO_DIR/.env.tmp.XXXXXX")"
+trap 'rm -f "$temporary_env"' EXIT
+
+awk \
+    -v db_password="$db_password" \
+    -v jwt_secret="$jwt_secret" \
+    -v frontend_port="$frontend_port" '
+        /^DB_PASSWORD=/ { print "DB_PASSWORD=" db_password; next }
+        /^JWT_SECRET=/ { print "JWT_SECRET=" jwt_secret; next }
+        /^FRONTEND_PORT=/ { print "FRONTEND_PORT=" frontend_port; next }
+        { print }
+    ' "$ENV_TEMPLATE" > "$temporary_env"
+
+chmod 600 "$temporary_env"
+mv "$temporary_env" "$ENV_FILE"
+trap - EXIT
+
+echo "--> Created .env with restricted permissions (credentials: $credentials_source)."
+echo "--> Optional LLM keys and MIN_COHORT_SIZE remain unset until approved values are provided."

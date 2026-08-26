@@ -42,6 +42,33 @@ public class UserController : ControllerBase
         return Content(user.SettingsJson, "application/json");
     }
 
+    [HttpGet("me")]
+    [HttpGet("/api/v1/me")]
+    public async Task<IActionResult> GetCurrentUser()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized(new { error = "Пользователь не авторизован." });
+        }
+
+        var user = await _context.Users
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null)
+        {
+            return NotFound(new { error = "Пользователь не найден." });
+        }
+
+        return Ok(new
+        {
+            id = user.Id,
+            username = user.Username,
+            email = user.Email,
+            role = user.Role
+        });
+    }
+
     [HttpPut("settings")]
     public async Task<IActionResult> SaveSettings([FromBody] JsonElement settings)
     {
