@@ -11,6 +11,6 @@ dist/
 
 .env
 frontend/.env
-models/
+/models/
 temp_uploads/
 .tmp/
