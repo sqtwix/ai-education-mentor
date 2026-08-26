@@ -1,30 +1,25 @@
-# Инструкция администратора: ИИ-Агент индивидуальной траектории обучения (ИОТ)
+# Руководство администратора платформы ИОТ
 
-Руководство по развертыванию, настройке, безопасности и мониторингу платформы «ИИ-агент индивидуальной траектории обучения».
+Документ описывает production-развёртывание, конфигурацию, безопасность, мониторинг, резервное копирование и восстановление платформы индивидуальных траекторий обучения.
 
----
+## 1. Контур и требования
 
-## 1. Архитектура и системные требования
+| Сервис | Назначение | Доступ с хоста |
+|---|---|---|
+| `frontend` | React SPA и nginx reverse proxy | `${FRONTEND_PORT:-80}` на всех интерфейсах |
+| `api-core` | ASP.NET Core 9, auth, очередь, данные | `127.0.0.1:${API_HOST_PORT:-5050}` |
+| `ai-driver` | FastAPI, LLM-конвейер | `127.0.0.1:8000` |
+| `postgres` | PostgreSQL 15 | только Docker network |
+| `qwen-local` | llama.cpp и GGUF | только Docker network |
 
-Платформа представляет собой микросервисный комплекс из 5 Docker-контейнеров:
-1. **`api-core`**: основной бэкенд на ASP.NET Core 9 (порт `5000`).
-2. **`ai-driver`**: микросервис мультиагентной системы на FastAPI / Python 3.13 (диагностический порт `127.0.0.1:8000`).
-3. **`frontend`**: веб-интерфейс на Nginx + React 19 SPA (порт `80`).
-4. **`postgres`**: база данных PostgreSQL 15 с поддержкой JSONB (порт `5432`).
-5. **`qwen-local`**: внутренний сервер инференса локальной модели на базе `llama.cpp`; порт модели не публикуется на хосте.
+Минимум: 4 CPU, 8 ГБ RAM, 15 ГБ SSD. Для локальной Qwen: 8 CPU, 16 ГБ RAM и 20 ГБ SSD. Нужны Docker Engine 24+ и Compose v2 либо standalone `docker-compose`.
 
-### Минимальные требования к серверу:
-- **ОС**: Ubuntu 22.04 LTS / Debian 12 / Windows Server 2022
-- **CPU**: 4–8 ядер (x86_64 или ARM64)
-- **RAM**: 8 ГБ (16 ГБ при использовании локальной модели на CPU)
-- **Диск**: 15–20 ГБ свободного места на SSD
-- **Docker**: Docker Engine 24+ и Docker Compose v2+ либо standalone `docker-compose`
+`docker-compose.yml` не завершает внешний production-периметр: перед публикацией установите TLS reverse proxy/WAF, доменное имя, сетевой ACL и резервное копирование по регламенту организации.
 
----
+## 2. Первичное развёртывание
 
-## 2. Быстрое развертывание
+### Linux / macOS
 
-### Развертывание в Linux / macOS:
 ```bash
 git clone https://github.com/sqtwix/ai-education-mentor.git
 cd ai-education-mentor
@@ -32,46 +27,56 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-### Развертывание в Windows:
+### Windows
+
 ```cmd
 git clone https://github.com/sqtwix/ai-education-mentor.git
 cd ai-education-mentor
 deploy.bat
 ```
 
----
+Deploy выполняет следующие действия:
 
-## 3. Конфигурация переменных окружения (`.env`)
+1. создаёт или безопасно дополняет `.env`;
+2. генерирует `DB_PASSWORD` и `JWT_SECRET`;
+3. проверяет, что секреты не шаблонные и JWT не короче 32 символов;
+4. загружает GGUF при отсутствии и обязательно сверяет SHA-256;
+5. собирает образы;
+6. подготавливает ownership volume Data Protection keys;
+7. запускает стек с настроенными healthchecks.
 
-При первом запуске `.env` создаётся из `env_example.txt`; `DB_PASSWORD` и `JWT_SECRET` генерируются криптографически стойким генератором. На Linux/macOS файл получает права `600`. Если `.env` отсутствует, но стек уже работает, скрипт сохраняет credentials действующего API-контейнера, чтобы не потерять доступ к существующему PostgreSQL volume.
+На Unix `.env` получает права `600`. Не запускайте `docker compose down -v`: флаг удаляет PostgreSQL и Data Protection volumes.
 
-Основные параметры:
+Для существующей установки задайте `FRONTEND_PORT=8088` в `.env`. При самом первом запуске можно выполнить:
+
+```bash
+FRONTEND_PORT=8088 ./deploy.sh
+```
+
+## 3. Конфигурация `.env`
+
+Шаблон находится в `env_example.txt`. Никогда не коммитьте рабочий `.env` и не прикладывайте его к заявкам поддержки.
+
+### Обязательные секреты
 
 ```ini
-# База данных PostgreSQL
 DB_HOST=postgres
 DB_PORT=5432
 DB_NAME=aichecker
 DB_USER=aichecker_user
-DB_PASSWORD=<генерируется при первом запуске>
+DB_PASSWORD=<случайный секрет>
 
-# JWT Аутентификация
-JWT_SECRET=<генерируется при первом запуске>
+JWT_SECRET=<случайный секрет не короче 32 символов>
 JWT_ISSUER=AiCheckerApiCore
 JWT_AUDIENCE=AiCheckerFrontend
 JWT_EXPIRY_MINUTES=1440
+```
 
-# Ключи внешних облачных моделей (Опционально)
-DEEPSEEK_API_KEY=sk-your-deepseek-key-here
-SBERGPT_API_KEY=your-gigachat-auth-key-here
+Смена `DB_PASSWORD` требует согласованной смены пароля существующей роли PostgreSQL. Простая замена значения в `.env` для уже созданного volume нарушит подключение. Смена `JWT_SECRET` завершит все активные сессии.
 
-# Режим работы фронтенда (false для реального бэкенда)
-VITE_OFFLINE_MODE=false
-FRONTEND_PORT=80
-ASPNETCORE_ENVIRONMENT=Production
-ANALYSIS_QUEUE_MAX_ATTEMPTS=5
+### Локальная модель
 
-# Локальная модель Qwen
+```ini
 QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf
 QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
 QWEN_MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5
@@ -80,99 +85,162 @@ QWEN_CONTEXT_SIZE=4096
 QWEN_THREADS=4
 QWEN_BATCH_SIZE=512
 QWEN_PARALLEL=1
+```
 
-# Минимальный размер когорты; оставьте пустым до решения владельца данных
+Checksum обязателен и должен содержать ровно 64 hex-символа. При несовпадении deploy останавливается. Для air-gapped установки заранее скопируйте проверенный файл в `models/`; автоматическая загрузка тогда не нужна.
+
+Не увеличивайте `QWEN_PARALLEL` без отдельного нагрузочного теста. Текущий профиль `1` выбран для устойчивой пакетной обработки. Контекст `4096`, отключённый prompt cache и `--cache-ram 0` являются частью проверенного профиля.
+
+### Облачные провайдеры
+
+```ini
+DEEPSEEK_API_KEY=
+DEEPSEEK_MODEL=deepseek-chat
+SBERGPT_API_KEY=
+SBERGPT_MODEL=GigaChat-Pro
+```
+
+Они необязательны. Пустой ключ делает соответствующую модель недоступной в интерфейсе. Перед включением внешнего провайдера согласуйте передачу обезличенных данных, договор, лимиты, журналирование и требования организации.
+
+### Очередь, когорта и загрузка
+
+```ini
+ANALYSIS_QUEUE_MAX_ATTEMPTS=5
 MIN_COHORT_SIZE=
+UPLOAD_MAX_FILE_BYTES=26214400
+UPLOAD_MAX_REQUEST_BYTES=52428800
+UPLOAD_MAX_FILE_COUNT=20
+UPLOAD_MAX_ARCHIVE_ENTRIES=100
+UPLOAD_MAX_ARCHIVE_UNCOMPRESSED_BYTES=104857600
+UPLOAD_MAX_ARCHIVE_COMPRESSION_RATIO=100
 ```
 
-Не переносите `.env` в репозиторий и не публикуйте его содержимое. Если файл создан вручную из шаблона, замените оба значения `CHANGE_ME_*`: deploy-скрипты останавливаются при шаблонном пароле или JWT-секрете короче 32 символов. Порт можно задать до первого запуска, например `FRONTEND_PORT=8088 ./deploy.sh`.
+`MIN_COHORT_SIZE` — не технический параметр производительности. Его утверждает владелец данных как минимально допустимый размер группы для статистики. Пустое значение отключает когортное ранжирование, сохраняя остальную генерацию.
 
-Порты AI-driver и Qwen привязаны только к loopback-интерфейсу хоста. Это сохраняет локальную диагностику через `localhost`, но не позволяет обращаться к внутренним model-endpoint из локальной сети в обход JWT-защищённого API Core. Межконтейнерные запросы продолжают идти по сети `saas-network`.
+Очередь хранится в PostgreSQL. Задачи `Queued`, `Processing` и `Retrying` переживают перезапуск; checkpoint сохраняется после каждого профиля. По умолчанию допускается 5 попыток. Штатная остановка worker не расходует попытку.
 
-`MIN_COHORT_SIZE` нельзя подбирать технически: значение утверждает владелец данных. Пока оно пустое, AI-driver возвращает явное ограничение и не использует когортную статистику в ранжировании.
-
-`ANALYSIS_QUEUE_MAX_ATTEMPTS` задает число попыток стойкой очереди PostgreSQL (по умолчанию 5). Входной профиль сохраняется в JSONB до обработки; задания в `Queued`, `Processing` и `Retrying` не теряются при перезапуске API. Штатная остановка worker не расходует попытку.
-
----
-
-## 4. Локальная модель Qwen3-1.7B Q4_K_M (Air-Gapped контур)
-
-Скрипт развертывания скачивает GGUF-файл из `QWEN_MODEL_URL`, если файла `QWEN_MODEL_FILE` еще нет. Для закрытого контура заранее поместите проверенный совместимый GGUF-файл в `./models/`; требуемые ресурсы зависят от выбранного файла.
-
-Перед финальной приемкой заполните `QWEN_MODEL_SHA256` в `.env`. Если hash не задан, deploy-скрипт запустится, но явно сообщит, что проверка целостности модели пропущена.
-
-Контейнер `qwen-local` запускает сервер `llama.cpp`:
-```bash
--m /models/Qwen3-1.7B-Q4_K_M.gguf --host 0.0.0.0 --port 8080 -c 4096 --threads 4 -b 512 -np 1 --cache-ram 0 --no-cache-prompt --no-cache-idle-slots --metrics --alias local-model
-```
-
-Для текущего профиля ресурсов обязателен `QWEN_PARALLEL=1`: задания сериализует стойкая очередь API, а параллельные слоты локальной модели повышают расход памяти и в runtime-тесте привели к рестарту `qwen-local`.
-Prompt cache отключён: профили различаются, поэтому повторное использование кеша минимально, а стандартный лимит llama.cpp в 8192 MiB создавал накопительное давление памяти при пакете из 15 сотрудников.
-
----
-
-## 5. Проверка работоспособности (Healthchecks)
-
-После запуска убедитесь, что контейнеры работают, а сервисы с настроенными healthcheck находятся в состоянии `healthy`:
+## 4. Проверка после запуска
 
 ```bash
 docker compose ps
+curl -fsS http://127.0.0.1:5050/health
+curl -fsS http://127.0.0.1:5050/health/ready
+curl -fsS http://127.0.0.1:8000/health
+curl -fsS http://127.0.0.1:8000/models/availability
+docker compose exec -T qwen-local curl -fsS http://127.0.0.1:8080/health
 ```
 
-Deploy-скрипт автоматически выбирает доступную команду. В ручных командах ниже замените `docker compose` на `docker-compose`, если установлен standalone Compose.
+Если установлена standalone-версия, замените `docker compose` на `docker-compose`.
 
-### Проверка API эндпоинтов:
-- **API Core Swagger**: `http://127.0.0.1:5050/swagger`
-- **AI-Driver FastAPI Docs**: `http://localhost:8000/docs`
-- **Каталог программ (AI-Driver)**:
-  ```bash
-  curl http://localhost:8000/agents/catalog
-  ```
-- **Бенчмарки по должностям**:
-  ```bash
-  curl http://localhost:8000/agents/benchmarks
-  ```
-- **Фактическая конфигурация моделей (без раскрытия ключей)**:
-  ```bash
-  curl http://localhost:8000/models/availability
-  ```
-- **Локальная модель Qwen Health**:
-  ```bash
-  docker-compose exec -T qwen-local curl -fsS http://localhost:8080/health
-  ```
+- `/health` проверяет сам API Core.
+- `/health/ready` проверяет готовность его зависимостей.
+- `/models/availability` не раскрывает ключи и показывает реальную доступность провайдеров.
+- Swagger доступен только на loopback: `http://127.0.0.1:5050/swagger`.
 
-- **Готовность API Core и его зависимостей**:
-  ```bash
-  curl http://127.0.0.1:5050/health/ready
-  ```
-- **Метрики очереди и обработки** (требуется JWT администратора):
-  ```bash
-  curl -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:5050/api/v1/operations/metrics
-  ```
+Проверьте пользовательский сценарий: регистрация → вход → создание одного профиля → Qwen → завершение → открытие отчёта → PDF/XLSX/JSON → архив → восстановление.
 
----
+## 5. Мониторинг и журналы
 
-## 6. Резервное копирование и обслуживание
+Сводка контейнеров и журналы:
 
-### Дамп базы данных PostgreSQL:
 ```bash
-docker compose exec postgres pg_dump -U aichecker_user aichecker > backup_$(date +%Y%m%d).sql
+docker compose ps
+docker compose logs --tail=200 api-core
+docker compose logs --tail=200 ai-driver
+docker compose logs --tail=200 qwen-local
 ```
 
-### Восстановление из дампа:
+Следите за restart count, `unhealthy`, заполнением диска, временем очереди, повторными попытками и числом `CompletedWithLimitations`/`Failed`. Docker-логи ограничены пятью файлами по 10 МБ на сервис.
+
+Административные метрики очереди требуют JWT пользователя с ролью `Admin`:
+
 ```bash
-cat backup_20260821.sql | docker compose exec -T postgres psql -U aichecker_user aichecker
+curl -H "Authorization: Bearer $ADMIN_TOKEN" \
+  http://127.0.0.1:5050/api/v1/operations/metrics
 ```
 
-### Автоматическая проверка backup → restore:
+Не помещайте токен в shell history на общем сервере. Роль `Admin` не выдаётся публичной регистрацией; назначайте её только утверждённым пользователям через контролируемую административную процедуру.
+
+## 6. Резервное копирование и восстановление
+
+Создание дампа без вывода пароля:
+
+```bash
+docker compose exec -T postgres sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > backup.sql
+```
+
+Перед восстановлением остановите пользовательский трафик, создайте свежую резервную копию и проверьте целевую БД:
+
+```bash
+docker compose exec -T postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < backup.sql
+```
+
+Автоматическая неповреждающая проверка dump→временная БД→сверка→удаление:
+
 ```bash
 ./scripts/backup_restore_smoke.sh
 ```
-Скрипт создаёт dump работающей базы, восстанавливает его в изолированную временную БД,
-сверяет количество пользователей, отчётов и сохранённых результатов, затем удаляет временную БД.
 
-### Перезапуск без потери данных:
+Храните backup за пределами Docker host, шифруйте и регулярно проверяйте восстановление. Отдельно сохраняйте `.env` в защищённом хранилище секретов; без корректного DB password база недоступна, а без Data Protection keys часть защищённых данных может потерять расшифровываемость.
+
+## 7. Обновление и откат
+
+Перед обновлением:
+
+1. зафиксируйте текущий commit/image digest;
+2. сделайте и проверьте backup;
+3. изучите миграции БД;
+4. выполните тесты из `RELEASE_GATE.md`;
+5. запланируйте окно обслуживания.
+
+Обновление выполняйте штатным `./deploy.sh`. EF Core migrations применяются API при старте. Не откатывайте приложение на схему, несовместимую со старой версией; при необходимости восстанавливайте согласованную пару приложения и backup БД.
+
+Безопасный перезапуск текущей версии:
+
 ```bash
 docker compose restart
 ```
-*(Не используйте флаг `-v` при остановке, чтобы сохранить данные в томах PostgreSQL)*.
+
+## 8. Диагностика
+
+### Qwen не становится healthy
+
+```bash
+sha256sum models/Qwen3-1.7B-Q4_K_M.gguf
+docker compose logs --tail=300 qwen-local
+```
+
+Сверьте имя, checksum, свободную RAM/диск и параметры 4096/4/512/1. Не заменяйте модель файлом с тем же именем без обновления утверждённого hash и повторной приёмки.
+
+### API не ready
+
+Проверьте `postgres`, `ai-driver`, затем `api-core`. Частые причины: несогласованный DB password существующего volume, незапущенная модель, нехватка диска или ошибочная переменная окружения.
+
+### Задача долго обрабатывается
+
+Локальная CPU-модель работает последовательно. Проверьте stage, queue metrics, restart count и логи. Не меняйте статус напрямую в БД. После рестарта задача должна продолжиться с checkpoint; исчерпавшая попытки задача станет `Failed`.
+
+### Результат завершён с ограничениями
+
+Это штатный защищённый fallback после ошибки LLM. Количественно отслеживайте такие случаи, передавайте результат методисту и устраняйте причину модели. Экспорт заблокирован намеренно.
+
+### Закончился диск
+
+Проверьте Docker images, volumes, backups и системные журналы. Не удаляйте `postgres_data` или `dataprotection_keys`. Очистку неиспользуемых образов выполняйте только после фиксации используемых digest и проверки возможности отката.
+
+## 9. Production checklist
+
+- [ ] Установлены уникальные DB/JWT secrets, `.env` защищён.
+- [ ] GGUF checksum совпадает, образ llama.cpp закреплён digest.
+- [ ] Внешние порты ограничены firewall; настроен TLS.
+- [ ] Неиспользуемые облачные ключи пусты.
+- [ ] Владелец данных документировал решение по `MIN_COHORT_SIZE`.
+- [ ] Все контейнеры healthy, restart count равен нулю после стабилизации.
+- [ ] Пройден end-to-end пользовательский сценарий.
+- [ ] Пройдены ACL, пакетный runtime и backup/restore smoke.
+- [ ] Настроены мониторинг, alerting, retention и внешний backup.
+- [ ] Назначены ответственные за доступы, инциденты и экспертную проверку ИОТ.
+
+Границы подтверждённой готовности и команды приёмки находятся в [RELEASE_GATE.md](RELEASE_GATE.md) и [QWEN3_PIPELINE_VALIDATION_REPORT.md](QWEN3_PIPELINE_VALIDATION_REPORT.md).
