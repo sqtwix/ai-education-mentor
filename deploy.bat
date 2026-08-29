@@ -19,6 +19,9 @@ rem so an .env generated before new keys were added to env_example.txt (e.g.
 rem the QWEN_MODEL_* variables) would silently keep missing them forever.
 rem Backfill any keys present in the template but absent from .env, without
 rem touching keys that are already set (secrets included).
+powershell -NoProfile -Command "$path = '.env'; if ((Get-Item -LiteralPath $path).Length -gt 0) { $bytes = [IO.File]::ReadAllBytes($path); if ($bytes[-1] -ne 10) { [IO.File]::AppendAllText($path, [Environment]::NewLine) } }"
+if errorlevel 1 exit /b 1
+
 for /f "usebackq delims=" %%L in ("env_example.txt") do (
     set "tmpl_line=%%L"
     if not "!tmpl_line!"=="" if not "!tmpl_line:~0,1!"=="#" (

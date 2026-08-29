@@ -15,6 +15,10 @@ FRONTEND_PORT="${FRONTEND_PORT:-80}" scripts/init_env.sh
 # QWEN_MODEL_* variables) would silently keep missing them forever. Backfill
 # any keys present in the template but absent from .env, without touching
 # keys that are already set (secrets included).
+if [ -s .env ] && [ -n "$(tail -c 1 .env)" ]; then
+    printf '\n' >> .env
+fi
+
 while IFS= read -r template_line; do
     template_key="${template_line%%=*}"
     if ! grep -q "^${template_key}=" .env; then
