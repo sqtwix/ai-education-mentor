@@ -25,6 +25,9 @@ UPLOAD_MAX_FILE_COUNT=20
 UPLOAD_MAX_ARCHIVE_ENTRIES=100
 UPLOAD_MAX_ARCHIVE_UNCOMPRESSED_BYTES=104857600
 UPLOAD_MAX_ARCHIVE_COMPRESSION_RATIO=100
+# false: платформа запускается без локальной нейросети; каталог, аналитика,
+# аккаунты, настройки и история остаются доступны. true: включить Qwen profile.
+ENABLE_LOCAL_QWEN=false
 QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf
 QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
 QWEN_MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5

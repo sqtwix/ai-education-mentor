@@ -103,11 +103,14 @@ class AgentManagerFallbackTests(unittest.TestCase):
     @patch("backend.model_availability.qwen_local_ready", return_value=False)
     @patch.dict("os.environ", {"DEEPSEEK_API_KEY": "", "SBERGPT_API_KEY": ""}, clear=False)
     def test_model_availability_does_not_claim_missing_providers(self, _qwen_ready):
-        availability = {item["id"]: item for item in get_model_availability()["models"]}
+        response = get_model_availability()
+        availability = {item["id"]: item for item in response["models"]}
 
         self.assertFalse(availability["deepseek"]["configured"])
         self.assertFalse(availability["sbergpt"]["configured"])
         self.assertFalse(availability["qwen_local"]["configured"])
+        self.assertFalse(response["generation_available"])
+        self.assertEqual(response["operating_mode"], "no-ai")
 
     @patch("backend.model_availability.qwen_local_ready", return_value=True)
     @patch.dict(
@@ -116,9 +119,12 @@ class AgentManagerFallbackTests(unittest.TestCase):
         clear=False,
     )
     def test_model_availability_reports_configured_providers(self, _qwen_ready):
-        availability = {item["id"]: item for item in get_model_availability()["models"]}
+        response = get_model_availability()
+        availability = {item["id"]: item for item in response["models"]}
 
         self.assertTrue(all(item["configured"] for item in availability.values()))
+        self.assertTrue(response["generation_available"])
+        self.assertEqual(response["operating_mode"], "ai-enabled")
 
     @patch("backend.model_availability.qwen_local_ready", return_value=True)
     @patch.dict(

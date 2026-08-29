@@ -63,7 +63,6 @@ public class AnalysisController : ControllerBase
         {
             return BadRequest(new { error = "Неизвестная модель. Допустимые значения: deepseek, sbergpt, qwen_local." });
         }
-
         var taskId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString() : request.RequestId;
         if (taskId.Length > 128 || taskId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_'))
         {
@@ -85,6 +84,10 @@ public class AnalysisController : ControllerBase
                 message = "Повторный запрос распознан; используется уже созданная задача.",
                 deduplicated = true
             });
+        }
+        if (!await IsModelAvailableAsync(modelType, HttpContext.RequestAborted))
+        {
+            return ModelUnavailable();
         }
         var courseName = $"ИОТ: {request.Employee.Fio} ({request.Employee.Position})";
 
@@ -145,7 +148,6 @@ public class AnalysisController : ControllerBase
         {
             return BadRequest(new { error = "Неизвестная модель. Допустимые значения: deepseek, sbergpt, qwen_local." });
         }
-
         var taskId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString() : requestId;
         if (taskId.Length > 128 || taskId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_'))
         {
@@ -229,6 +231,11 @@ public class AnalysisController : ControllerBase
             });
         }
 
+        if (!await IsModelAvailableAsync(normalizedModelType, HttpContext.RequestAborted))
+        {
+            return ModelUnavailable();
+        }
+
         var courseName = FileParser.ExtractCourseName(userResponseFiles[0].FileName);
         var report = new AnalysisReport
         {
@@ -258,6 +265,54 @@ public class AnalysisController : ControllerBase
     {
         var catalog = _fileParser.GetDefaultCatalog();
         return Ok(catalog);
+    }
+
+    private async Task<bool> IsModelAvailableAsync(string modelType, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient("AiDriverStatus");
+            using var response = await client.GetAsync("models/availability", cancellationToken);
+            if (!response.IsSuccessStatusCode) return false;
+
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (!document.RootElement.TryGetProperty("models", out var models) ||
+                models.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            foreach (var model in models.EnumerateArray())
+            {
+                if (model.TryGetProperty("id", out var id) &&
+                    string.Equals(id.GetString(), modelType, StringComparison.OrdinalIgnoreCase) &&
+                    model.TryGetProperty("configured", out var configured) &&
+                    configured.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                {
+                    return configured.GetBoolean();
+                }
+            }
+        }
+        catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Таймаут проверки трактуется как недоступность модели.
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            // Отсутствие AI-driver или повреждённый ответ не должны нарушать
+            // каталог, аналитику и остальные функции платформы.
+        }
+
+        return false;
+    }
+
+    private ObjectResult ModelUnavailable()
+    {
+        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+        {
+            error = "Выбранная модель ИИ не настроена или временно недоступна. Платформа продолжает работать без генерации траекторий.",
+            code = "MODEL_UNAVAILABLE"
+        });
     }
 
     [HttpGet("models")]

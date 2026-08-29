@@ -21,32 +21,35 @@ def get_model_availability() -> dict:
     deepseek_ready = configured_api_key("DEEPSEEK_API_KEY")
     sber_ready = configured_api_key("SBERGPT_API_KEY")
     qwen_ready = qwen_local_ready()
+    models = [
+        {
+            "id": "deepseek",
+            "group": "foreign",
+            "configured": deepseek_ready,
+            "model": (os.getenv("DEEPSEEK_MODEL") or "deepseek-chat").strip(),
+            "status": "ready" if deepseek_ready else "api_key_missing",
+        },
+        {
+            "id": "sbergpt",
+            "group": "russian",
+            "configured": sber_ready,
+            "model": (os.getenv("SBERGPT_MODEL") or "GigaChat-Pro").strip(),
+            "status": "ready" if sber_ready else "api_key_missing",
+        },
+        {
+            "id": "qwen_local",
+            "group": "local",
+            "configured": qwen_ready,
+            "model": (
+                os.getenv("QWEN_MODEL_FILE")
+                or os.getenv("QWEN_LOCAL_MODEL")
+                or "local-model"
+            ).strip(),
+            "status": "ready" if qwen_ready else "local_service_unavailable",
+        },
+    ]
     return {
-        "models": [
-            {
-                "id": "deepseek",
-                "group": "foreign",
-                "configured": deepseek_ready,
-                "model": (os.getenv("DEEPSEEK_MODEL") or "deepseek-chat").strip(),
-                "status": "ready" if deepseek_ready else "api_key_missing",
-            },
-            {
-                "id": "sbergpt",
-                "group": "russian",
-                "configured": sber_ready,
-                "model": (os.getenv("SBERGPT_MODEL") or "GigaChat-Pro").strip(),
-                "status": "ready" if sber_ready else "api_key_missing",
-            },
-            {
-                "id": "qwen_local",
-                "group": "local",
-                "configured": qwen_ready,
-                "model": (
-                    os.getenv("QWEN_MODEL_FILE")
-                    or os.getenv("QWEN_LOCAL_MODEL")
-                    or "local-model"
-                ).strip(),
-                "status": "ready" if qwen_ready else "local_service_unavailable",
-            },
-        ]
+        "generation_available": any(model["configured"] for model in models),
+        "operating_mode": "ai-enabled" if any(model["configured"] for model in models) else "no-ai",
+        "models": models,
     }

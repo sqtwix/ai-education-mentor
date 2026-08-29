@@ -7,7 +7,7 @@
 - `frontend`: React 19, Vite 8, nginx, Recharts, ExcelJS, jsPDF.
 - `api-core`: ASP.NET Core 9, EF Core, PostgreSQL, JWT, стойкая очередь.
 - `ai-driver`: Python 3.13, FastAPI, Pydantic, OpenAI-compatible clients.
-- `qwen-local`: llama.cpp server и Qwen3-1.7B Q4_K_M.
+- `qwen-local`: опциональный Docker profile `local-ai`, llama.cpp server и Qwen3-1.7B Q4_K_M.
 
 ```mermaid
 sequenceDiagram
@@ -57,12 +57,14 @@ scripts/                  runtime, ACL, load, backup/restore smoke
 
 ## 3. Локальный старт
 
-Самый воспроизводимый режим — полный Docker stack:
+Самый воспроизводимый базовый режим — Docker stack без нейросети:
 
 ```bash
 ./deploy.sh
 docker compose ps
 ```
+
+Он запускает frontend, API Core, PostgreSQL и AI Driver. Чтобы добавить локальную Qwen, установите в `.env` `ENABLE_LOCAL_QWEN=true` и повторите `./deploy.sh`. Для ручного Compose-запуска используйте `docker compose --profile local-ai up -d`.
 
 ### Frontend отдельно
 
@@ -89,7 +91,7 @@ dotnet run --project ApiCore/ApiCore.csproj
 
 ### AI Driver отдельно
 
-Нужен Python 3.13 и доступный OpenAI-compatible endpoint модели.
+Нужен Python 3.13. OpenAI-compatible endpoint не требуется для старта AI Driver: `/health` и `/models/availability` работают в режиме `no-ai`; вызовы генерации доступны только после подключения провайдера.
 
 ```bash
 cd ai-driver
@@ -119,6 +121,8 @@ uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 - `GET/PUT /api/v1/user/settings`, `GET /api/v1/user/me`.
 
 AI Driver endpoints находятся под `/agents`: отдельные вызовы DeepSeek, GigaChat и Qwen, а также `catalog`, `benchmarks` и `progress/{request_id}`. Они являются внутренним контрактом API Core, а не браузерным API.
+
+Перед созданием задачи API Core проверяет `/models/availability`. Если провайдер не готов, возвращается `503` с кодом `MODEL_UNAVAILABLE`; задача не записывается в очередь. Отсутствие всех моделей не влияет на readiness API, пока доступны PostgreSQL и AI Driver.
 
 Каждый запрос frontend получает `X-Correlation-ID`. Сохраняйте его при добавлении новых сетевых вызовов и не включайте персональные данные в идентификатор или логи.
 
@@ -199,6 +203,7 @@ dotnet run --project ApiCore.ContractTests/ApiCore.ContractTests.csproj -c Relea
 
 ```bash
 ./scripts/iot_runtime_smoke.sh
+./scripts/no_ai_runtime_smoke.sh
 ./scripts/iot_multi_user_runtime_smoke.sh
 ./scripts/qa_acl_smoke.sh
 ./scripts/platform_runtime_smoke.sh

@@ -17,6 +17,7 @@ if not exist "models" mkdir models
 for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
     if "%%A"=="DB_PASSWORD" set "DB_PASSWORD=%%B"
     if "%%A"=="JWT_SECRET" set "JWT_SECRET=%%B"
+    if "%%A"=="ENABLE_LOCAL_QWEN" set "ENABLE_LOCAL_QWEN=%%B"
     if "%%A"=="QWEN_MODEL_FILE" set "QWEN_MODEL_FILE=%%B"
     if "%%A"=="QWEN_MODEL_URL" set "QWEN_MODEL_URL=%%B"
     if "%%A"=="QWEN_MODEL_SHA256" set "QWEN_MODEL_SHA256=%%B"
@@ -44,38 +45,49 @@ if "!JWT_SECRET:~31,1!"=="" (
     exit /b 1
 )
 
-if not defined QWEN_MODEL_FILE set "QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf"
-if not defined QWEN_MODEL_URL set "QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+if not defined ENABLE_LOCAL_QWEN set "ENABLE_LOCAL_QWEN=false"
+if /i not "%ENABLE_LOCAL_QWEN%"=="true" if /i not "%ENABLE_LOCAL_QWEN%"=="false" (
+    echo ERROR: ENABLE_LOCAL_QWEN must be true or false.
+    exit /b 1
+)
 
-set "MODEL_FILE=%QWEN_MODEL_FILE%"
-set "MODEL_PATH=models\%MODEL_FILE%"
-if not exist "%MODEL_PATH%" (
-    echo --> Downloading local Qwen3 GGUF model (%MODEL_FILE%)...
-    powershell -Command "Invoke-WebRequest -Uri '%QWEN_MODEL_URL%' -OutFile 'models\%MODEL_FILE%'"
-    echo --> Model downloaded successfully.
+if /i "%ENABLE_LOCAL_QWEN%"=="true" (
+    if not defined QWEN_MODEL_FILE set "QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf"
+    if not defined QWEN_MODEL_URL set "QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+
+    set "MODEL_FILE=!QWEN_MODEL_FILE!"
+    set "MODEL_PATH=models\!MODEL_FILE!"
+    if not exist "!MODEL_PATH!" (
+        echo --> Downloading local Qwen3 GGUF model (!MODEL_FILE!)...
+        powershell -Command "Invoke-WebRequest -Uri '!QWEN_MODEL_URL!' -OutFile '!MODEL_PATH!'"
+        if errorlevel 1 exit /b 1
+        echo --> Model downloaded successfully.
+    ) else (
+        echo --> Local GGUF model already exists in .\models, skipping download.
+    )
+
+    if not defined QWEN_MODEL_SHA256 (
+        echo ERROR: QWEN_MODEL_SHA256 must contain the approved SHA256 when ENABLE_LOCAL_QWEN=true.
+        exit /b 1
+    )
+    if "!QWEN_MODEL_SHA256:~63,1!"=="" (
+        echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
+        exit /b 1
+    )
+    if not "!QWEN_MODEL_SHA256:~64,1!"=="" (
+        echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
+        exit /b 1
+    )
+    echo --> Verifying Qwen model SHA256...
+    for /f "tokens=1" %%H in ('certutil -hashfile "!MODEL_PATH!" SHA256 ^| findstr /r "^[0-9A-Fa-f][0-9A-Fa-f]"') do set "ACTUAL_SHA=%%H"
+    if /i not "!ACTUAL_SHA!"=="!QWEN_MODEL_SHA256!" (
+        echo ERROR: Qwen model checksum mismatch.
+        echo Expected: !QWEN_MODEL_SHA256!
+        echo Actual:   !ACTUAL_SHA!
+        exit /b 1
+    )
 ) else (
-    echo --> Local GGUF model already exists in .\models, skipping download.
-)
-
-if not defined QWEN_MODEL_SHA256 (
-    echo ERROR: QWEN_MODEL_SHA256 must contain the approved SHA256.
-    exit /b 1
-)
-if "!QWEN_MODEL_SHA256:~63,1!"=="" (
-    echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
-    exit /b 1
-)
-if not "!QWEN_MODEL_SHA256:~64,1!"=="" (
-    echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
-    exit /b 1
-)
-echo --> Verifying Qwen model SHA256...
-for /f "tokens=1" %%H in ('certutil -hashfile "%MODEL_PATH%" SHA256 ^| findstr /r "^[0-9A-Fa-f][0-9A-Fa-f]"') do set "ACTUAL_SHA=%%H"
-if /i not "!ACTUAL_SHA!"=="%QWEN_MODEL_SHA256%" (
-    echo ERROR: Qwen model checksum mismatch.
-    echo Expected: %QWEN_MODEL_SHA256%
-    echo Actual:   !ACTUAL_SHA!
-    exit /b 1
+    echo --> Local Qwen is disabled; starting the platform without a neural model.
 )
 
 docker compose version >nul 2>&1
@@ -90,17 +102,25 @@ if not errorlevel 1 (
     set "COMPOSE=docker-compose"
 )
 echo --> Building production images...
-!COMPOSE! build
+set "COMPOSE_PROFILE="
+if /i "%ENABLE_LOCAL_QWEN%"=="true" (
+    set "COMPOSE_PROFILE=--profile local-ai"
+) else (
+    rem Remove a qwen-local container left by an earlier local-ai deployment.
+    rem The GGUF file is a bind mount and is not deleted.
+    !COMPOSE! --profile local-ai rm -sf qwen-local >nul 2>&1
+)
+!COMPOSE! !COMPOSE_PROFILE! build
 if errorlevel 1 exit /b 1
 
 rem Previous releases created the DataProtection volume while API Core ran as
 rem root. Migrate only this dedicated volume before the non-root API starts.
 echo --> Preparing persistent DataProtection key permissions...
-!COMPOSE! run --rm --no-deps --user root --entrypoint /bin/sh api-core -c "mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys"
+!COMPOSE! !COMPOSE_PROFILE! run --rm --no-deps --user root --entrypoint /bin/sh api-core -c "mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys"
 if errorlevel 1 exit /b 1
 
 echo --> Starting Docker containers...
-!COMPOSE! up --no-build -d --remove-orphans
+!COMPOSE! !COMPOSE_PROFILE! up --no-build -d --remove-orphans
 if errorlevel 1 exit /b 1
 
 echo ==================================================

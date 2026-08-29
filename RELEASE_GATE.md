@@ -28,7 +28,8 @@
 - [x] `dotnet list package --vulnerable --include-transitive` — уязвимых пакетов нет.
 - [x] API Core и AI-driver работают от непривилегированных пользователей, с read-only root filesystem и `no-new-privileges`; временные upload-файлы вынесены в ограниченный tmpfs.
 - [x] Docker JSON-логи всех сервисов ограничены ротацией `10m × 5`, чтобы длительная эксплуатация не заполняла диск.
-- [x] Локальный model endpoint не публикуется на хосте; llama.cpp закреплён immutable digest, модель и deploy проверяются обязательным SHA256.
+- [x] Локальный model endpoint не публикуется на хосте; при включении `local-ai` llama.cpp закреплён immutable digest, а модель и deploy проверяются обязательным SHA256.
+- [x] Базовый стек запускается при `ENABLE_LOCAL_QWEN=false` без GGUF и облачных ключей; каталог, аналитика, аккаунты, история и настройки доступны, генерация возвращает `MODEL_UNAVAILABLE`.
 
 ## Данные и рекомендации
 

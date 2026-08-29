@@ -13,7 +13,7 @@ FRONTEND_PORT="${FRONTEND_PORT:-80}" scripts/init_env.sh
 while IFS='=' read -r key value; do
     value="${value%$'\r'}"
     case "$key" in
-        DB_PASSWORD|JWT_SECRET|QWEN_MODEL_FILE|QWEN_MODEL_URL|QWEN_MODEL_SHA256|FRONTEND_PORT|API_HOST_PORT)
+        DB_PASSWORD|JWT_SECRET|ENABLE_LOCAL_QWEN|QWEN_MODEL_FILE|QWEN_MODEL_URL|QWEN_MODEL_SHA256|FRONTEND_PORT|API_HOST_PORT)
             printf -v "$key" '%s' "$value"
             ;;
     esac
@@ -28,34 +28,49 @@ if [ -z "${JWT_SECRET:-}" ] || [ "$JWT_SECRET" = "CHANGE_ME_MINIMUM_32_RANDOM_CH
     exit 1
 fi
 
-# 2. Local AI Model Download (Qwen3 GGUF)
-mkdir -p models
-MODEL_FILE="${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}"
-MODEL_URL="${QWEN_MODEL_URL:-https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf}"
-MODEL_PATH="models/$MODEL_FILE"
+# 2. Optional local AI model (Qwen3 GGUF)
+ENABLE_LOCAL_QWEN="${ENABLE_LOCAL_QWEN:-false}"
+ENABLE_LOCAL_QWEN_NORMALIZED="$(printf '%s' "$ENABLE_LOCAL_QWEN" | tr '[:upper:]' '[:lower:]')"
+case "$ENABLE_LOCAL_QWEN_NORMALIZED" in
+    true) ENABLE_LOCAL_QWEN=true ;;
+    false) ENABLE_LOCAL_QWEN=false ;;
+    *)
+        echo "ERROR: ENABLE_LOCAL_QWEN must be true or false." >&2
+        exit 1
+        ;;
+esac
 
-if [ ! -f "$MODEL_PATH" ]; then
-    echo "--> Downloading local Qwen3 GGUF model ($MODEL_FILE)..."
-    curl -L -o "$MODEL_PATH" "$MODEL_URL"
-    echo "--> Model downloaded successfully."
+if [ "$ENABLE_LOCAL_QWEN" = true ]; then
+    mkdir -p models
+    MODEL_FILE="${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}"
+    MODEL_URL="${QWEN_MODEL_URL:-https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf}"
+    MODEL_PATH="models/$MODEL_FILE"
+
+    if [ ! -f "$MODEL_PATH" ]; then
+        echo "--> Downloading local Qwen3 GGUF model ($MODEL_FILE)..."
+        curl -fL --retry 3 -o "$MODEL_PATH" "$MODEL_URL"
+        echo "--> Model downloaded successfully."
+    else
+        echo "--> Local GGUF model already exists in ./models, skipping download."
+    fi
+
+    if [ -z "${QWEN_MODEL_SHA256:-}" ] || ! [[ "$QWEN_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "ERROR: QWEN_MODEL_SHA256 must contain the approved 64-character SHA256 when ENABLE_LOCAL_QWEN=true." >&2
+        exit 1
+    fi
+
+    echo "--> Verifying Qwen model SHA256..."
+    ACTUAL_SHA="$(shasum -a 256 "$MODEL_PATH" | awk '{print $1}')"
+    ACTUAL_SHA_NORMALIZED="$(printf '%s' "$ACTUAL_SHA" | tr '[:upper:]' '[:lower:]')"
+    EXPECTED_SHA_NORMALIZED="$(printf '%s' "$QWEN_MODEL_SHA256" | tr '[:upper:]' '[:lower:]')"
+    if [ "$ACTUAL_SHA_NORMALIZED" != "$EXPECTED_SHA_NORMALIZED" ]; then
+        echo "ERROR: Qwen model checksum mismatch."
+        echo "Expected: $QWEN_MODEL_SHA256"
+        echo "Actual:   $ACTUAL_SHA"
+        exit 1
+    fi
 else
-    echo "--> Local GGUF model already exists in ./models, skipping download."
-fi
-
-if [ -z "${QWEN_MODEL_SHA256:-}" ] || ! [[ "$QWEN_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    echo "ERROR: QWEN_MODEL_SHA256 must contain the approved 64-character SHA256." >&2
-    exit 1
-fi
-
-echo "--> Verifying Qwen model SHA256..."
-ACTUAL_SHA="$(shasum -a 256 "$MODEL_PATH" | awk '{print $1}')"
-ACTUAL_SHA_NORMALIZED="$(printf '%s' "$ACTUAL_SHA" | tr '[:upper:]' '[:lower:]')"
-EXPECTED_SHA_NORMALIZED="$(printf '%s' "$QWEN_MODEL_SHA256" | tr '[:upper:]' '[:lower:]')"
-if [ "$ACTUAL_SHA_NORMALIZED" != "$EXPECTED_SHA_NORMALIZED" ]; then
-    echo "ERROR: Qwen model checksum mismatch."
-    echo "Expected: $QWEN_MODEL_SHA256"
-    echo "Actual:   $ACTUAL_SHA"
-    exit 1
+    echo "--> Local Qwen is disabled; starting the platform without a neural model."
 fi
 
 # 3. Docker Container Deployment
@@ -68,17 +83,26 @@ else
     exit 1
 fi
 
+PROFILE_ARGS=()
+if [ "$ENABLE_LOCAL_QWEN" = true ]; then
+    PROFILE_ARGS=(--profile local-ai)
+else
+    # Compose does not automatically stop a profile container left by an
+    # earlier deployment. Remove only qwen-local; the GGUF bind mount remains.
+    "${COMPOSE[@]}" --profile local-ai rm -sf qwen-local >/dev/null 2>&1 || true
+fi
+
 echo "--> Building production images..."
-"${COMPOSE[@]}" build
+"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" build
 
 # Previous releases created the DataProtection volume while API Core ran as
 # root. Migrate only this dedicated volume before starting the non-root image.
 echo "--> Preparing persistent DataProtection key permissions..."
-"${COMPOSE[@]}" run --rm --no-deps --user root --entrypoint /bin/sh api-core \
+"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" run --rm --no-deps --user root --entrypoint /bin/sh api-core \
     -c 'mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys'
 
 echo "--> Starting Docker containers..."
-"${COMPOSE[@]}" up --no-build -d --remove-orphans
+"${COMPOSE[@]}" "${PROFILE_ARGS[@]}" up --no-build -d --remove-orphans
 
 echo "=================================================="
 echo "DEPLOYMENT SUCCESSFUL!"

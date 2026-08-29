@@ -655,7 +655,7 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
               <span className="model-card-desc">
                 {modelInfo("qwen_local")?.configured
                   ? `Локальный сервис готов: ${modelInfo("qwen_local").model}.`
-                  : "Локальный сервис недоступен: проверьте GGUF-файл и qwen-local."}
+                  : "Локальная модель выключена или недоступна."}
               </span>
             </button>
           </div>
@@ -663,7 +663,10 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
           {!selectedModel && (
             <div className="model-unavailable-note" role="status">
               <AlertCircle size={17} />
-              <span>Сейчас нет доступной модели. Настройте облачный ключ или локальный сервис.</span>
+              <span>
+                Генерация ИОТ временно недоступна: ни одна модель не подключена. Каталог, аналитика,
+                история и настройки продолжают работать.
+              </span>
             </div>
           )}
 
