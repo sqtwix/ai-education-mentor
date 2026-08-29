@@ -1,6 +1,6 @@
 # Production hardening audit: перенос мер из похожего проекта
 
-Дата проверки: 26 августа 2026 года.
+Дата основной проверки: 26 августа 2026 года. Режим штатного запуска без AI повторно проверен 30 августа 2026 года.
 
 ## Граница переноса
 
@@ -101,7 +101,8 @@
 - AI tests: 10/10, включая OpenAPI, PII, grounding, fallback и model availability.
 - API contract tests проходят в воспроизводимом test-image; проверяются JSON/CSV/XLSX/XLS/ZIP, неоднозначные заголовки, archive limits и auth DTO.
 - ACL smoke: 12/12; platform smoke: metrics, cache, idempotency и 429 прошли.
-- Frontend, API, AI-driver, PostgreSQL и Qwen имеют healthchecks; итоговый compose-стек полностью healthy.
+- Базовый no-AI стек (frontend, API, AI-driver, PostgreSQL) имеет healthchecks и полностью healthy; Qwen имеет отдельный healthcheck и подключается только профилем `local-ai`.
+- Отсутствие локальной модели и облачных ключей не блокирует запуск платформы. `/models/availability` возвращает `operating_mode=no-ai`, а попытка генерации отклоняется как `503 MODEL_UNAVAILABLE` до создания записи очереди.
 - API и AI-driver опубликованы только на loopback (`5050` и `8000`); пользовательский frontend остаётся на `8088`.
 - DataProtection keys хранятся в отдельном persistent volume; PostgreSQL volume сохраняется при recreate.
 - nginx security headers и ограничение request body согласованы с API.

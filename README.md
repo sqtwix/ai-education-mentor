@@ -77,7 +77,7 @@ flowchart LR
     U["React 19 / nginx"] -->|"/api/v1, JWT"| A["ASP.NET Core 9"]
     A --> P[("PostgreSQL 15")]
     A --> D["FastAPI AI Driver"]
-    D --> Q["Qwen3-1.7B / llama.cpp"]
+    D -. "опциональный профиль local-ai" .-> Q["Qwen3-1.7B / llama.cpp"]
     D -. "опционально" .-> C["DeepSeek / GigaChat"]
 ```
 
@@ -90,6 +90,8 @@ flowchart LR
 - context `4096`, threads `4`, batch `512`, parallel `1`;
 - prompt/cache RAM отключены для стабильной пакетной обработки;
 - образ llama.cpp закреплён immutable digest в `docker-compose.yml`.
+
+Если `ENABLE_LOCAL_QWEN` отсутствует, система безопасно считает его равным `false`. При базовом запуске модель не скачивается, контейнер `qwen-local` не создаётся, а отсутствие облачных ключей не мешает работе аккаунтов, каталога, аналитики, истории и настроек. Создание ИОТ блокируется до подключения хотя бы одного провайдера и возвращает API-ошибку `MODEL_UNAVAILABLE` без постановки задачи в очередь.
 
 ## Ограничения и безопасность
 

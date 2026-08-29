@@ -132,7 +132,13 @@ curl -fsS http://127.0.0.1:5050/health
 curl -fsS http://127.0.0.1:5050/health/ready
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS http://127.0.0.1:8000/models/availability
-docker compose exec -T qwen-local curl -fsS http://127.0.0.1:8080/health
+```
+
+Проверка Qwen выполняется только при `ENABLE_LOCAL_QWEN=true`:
+
+```bash
+docker compose --profile local-ai exec -T qwen-local \
+  curl -fsS http://127.0.0.1:8080/health
 ```
 
 Если установлена standalone-версия, замените `docker compose` на `docker-compose`.
@@ -152,10 +158,17 @@ docker compose exec -T qwen-local curl -fsS http://127.0.0.1:8080/health
 docker compose ps
 docker compose logs --tail=200 api-core
 docker compose logs --tail=200 ai-driver
-docker compose logs --tail=200 qwen-local
+```
+
+Логи локальной модели существуют только в профиле `local-ai`:
+
+```bash
+docker compose --profile local-ai logs --tail=200 qwen-local
 ```
 
 Следите за restart count, `unhealthy`, заполнением диска, временем очереди, повторными попытками и числом `CompletedWithLimitations`/`Failed`. Docker-логи ограничены пятью файлами по 10 МБ на сервис.
+
+При обновлении старой установки добавлять `ENABLE_LOCAL_QWEN=false` вручную не требуется: отсутствие переменной трактуется как `false`. `./deploy.sh` запустит базовые четыре сервиса и остановит ранее созданный контейнер `qwen-local`, не удаляя файл GGUF. Для повторного включения модели достаточно задать `ENABLE_LOCAL_QWEN=true` и снова выполнить deploy.
 
 Административные метрики очереди требуют JWT пользователя с ролью `Admin`:
 
@@ -214,7 +227,7 @@ docker compose restart
 
 ```bash
 sha256sum models/Qwen3-1.7B-Q4_K_M.gguf
-docker compose logs --tail=300 qwen-local
+docker compose --profile local-ai logs --tail=300 qwen-local
 ```
 
 Сверьте имя, checksum, свободную RAM/диск и параметры 4096/4/512/1. Не заменяйте модель файлом с тем же именем без обновления утверждённого hash и повторной приёмки.
