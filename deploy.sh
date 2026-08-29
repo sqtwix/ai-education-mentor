@@ -10,6 +10,19 @@ cd "$SCRIPT_DIR"
 # 1. Environment configuration setup
 FRONTEND_PORT="${FRONTEND_PORT:-80}" scripts/init_env.sh
 
+# init_env.sh only creates .env once and never rewrites an existing file, so
+# an .env generated before new keys were added to env_example.txt (e.g. the
+# QWEN_MODEL_* variables) would silently keep missing them forever. Backfill
+# any keys present in the template but absent from .env, without touching
+# keys that are already set (secrets included).
+while IFS= read -r template_line; do
+    template_key="${template_line%%=*}"
+    if ! grep -q "^${template_key}=" .env; then
+        printf '%s\n' "$template_line" >> .env
+        echo "--> Added missing ${template_key} to .env (default from env_example.txt)."
+    fi
+done < <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' env_example.txt)
+
 while IFS='=' read -r key value; do
     value="${value%$'\r'}"
     case "$key" in

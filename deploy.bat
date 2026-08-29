@@ -14,6 +14,23 @@ if not exist ".env" (
 
 if not exist "models" mkdir models
 
+rem init_env.ps1 only creates .env once and never rewrites an existing file,
+rem so an .env generated before new keys were added to env_example.txt (e.g.
+rem the QWEN_MODEL_* variables) would silently keep missing them forever.
+rem Backfill any keys present in the template but absent from .env, without
+rem touching keys that are already set (secrets included).
+for /f "usebackq delims=" %%L in ("env_example.txt") do (
+    set "tmpl_line=%%L"
+    if not "!tmpl_line!"=="" if not "!tmpl_line:~0,1!"=="#" (
+        for /f "tokens=1 delims==" %%K in ("!tmpl_line!") do set "tmpl_key=%%K"
+        findstr /b /c:"!tmpl_key!=" ".env" >nul
+        if errorlevel 1 (
+            >>".env" echo(!tmpl_line!
+            echo --> Added missing !tmpl_key! to .env ^(default from env_example.txt^).
+        )
+    )
+)
+
 for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
     if "%%A"=="DB_PASSWORD" set "DB_PASSWORD=%%B"
     if "%%A"=="JWT_SECRET" set "JWT_SECRET=%%B"
