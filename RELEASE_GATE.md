@@ -23,6 +23,7 @@
 - [x] DOM-аудит основных экранов не выявил элементов без доступного имени, изображений без `alt` и дублирующихся `id`; иерархия заголовков последовательна, диалог каталога управляется с клавиатуры.
 - [x] `VITE_OFFLINE_MODE=false` по умолчанию.
 - [x] Обычный deploy не выполняет предварительный `down`/удаление volume, автоматически выбирает Compose v2 или standalone и подтверждён сквозным запуском на порту 8088.
+- [x] Deploy не сообщает об успехе до `healthy` всех включённых сервисов; при ошибке указывает сервис и команду для логов.
 - [x] Полный `npm audit` (production + dev) — 0 vulnerabilities.
 - [x] `pip-audit` внутри production-образа — no known vulnerabilities.
 - [x] `dotnet list package --vulnerable --include-transitive` — уязвимых пакетов нет.

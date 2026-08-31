@@ -3,6 +3,14 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_URL="${API_URL:-http://127.0.0.1:5050/api/v1}"
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+else
+  echo "ERROR: Docker Compose is required." >&2
+  exit 1
+fi
 PROFILE_COUNT="${PROFILE_COUNT:-15}"
 CHECKPOINT_RESTART_AT="${CHECKPOINT_RESTART_AT:-2}"
 POLL_TIMEOUT_SECONDS="${POLL_TIMEOUT_SECONDS:-900}"
@@ -29,7 +37,7 @@ trap on_error ERR
 
 cleanup() {
   cd "$PROJECT_DIR"
-  docker-compose exec -T postgres sh -lc \
+  "${COMPOSE[@]}" exec -T postgres sh -lc \
     "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"DELETE FROM analysis_reports WHERE id = '$request_id'; DELETE FROM users WHERE email = '$email';\"" \
     >/dev/null 2>&1 || true
   rm -rf "$work_dir"
@@ -95,7 +103,7 @@ for _ in $(seq 1 "$POLL_TIMEOUT_SECONDS"); do
     fi
   fi
 
-  checkpoint="$(cd "$PROJECT_DIR" && docker-compose exec -T postgres sh -lc \
+  checkpoint="$(cd "$PROJECT_DIR" && "${COMPOSE[@]}" exec -T postgres sh -lc \
     "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Atqc \"SELECT COALESCE((checkpoint_json->>'NextEmployeeIndex')::int, 0) FROM analysis_reports WHERE id = '$request_id';\"" 2>/dev/null || printf '0')"
   checkpoint="${checkpoint:-0}"
   if [[ "$checkpoint" =~ ^[0-9]+$ ]] && [ "$checkpoint" -gt "$max_checkpoint" ]; then
@@ -105,8 +113,8 @@ for _ in $(seq 1 "$POLL_TIMEOUT_SECONDS"); do
   if [ "$restart_triggered" = "false" ] && [ "$checkpoint" -ge "$CHECKPOINT_RESTART_AT" ]; then
     restart_triggered=true
     restart_trigger_checkpoint="$checkpoint"
-    (cd "$PROJECT_DIR" && docker-compose kill -s SIGKILL ai-driver >/dev/null)
-    (cd "$PROJECT_DIR" && docker-compose up -d ai-driver >/dev/null)
+    (cd "$PROJECT_DIR" && "${COMPOSE[@]}" kill -s SIGKILL ai-driver >/dev/null)
+    (cd "$PROJECT_DIR" && "${COMPOSE[@]}" up -d ai-driver >/dev/null)
     for _ in $(seq 1 60); do
       if curl -fsS http://127.0.0.1:8000/health >/dev/null 2>&1; then
         break
@@ -151,7 +159,7 @@ jq -e --arg completed "$completed_course" '
 
 attempt_count="$(jq -er '.attempt_count' <<<"$terminal_body")"
 test "$attempt_count" -ge 2
-checkpoint_after="$(cd "$PROJECT_DIR" && docker-compose exec -T postgres sh -lc \
+checkpoint_after="$(cd "$PROJECT_DIR" && "${COMPOSE[@]}" exec -T postgres sh -lc \
   "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Atqc \"SELECT CASE WHEN checkpoint_json IS NULL THEN 'cleared' ELSE 'present' END FROM analysis_reports WHERE id = '$request_id';\"" 2>/dev/null)"
 test "$checkpoint_after" = "cleared"
 

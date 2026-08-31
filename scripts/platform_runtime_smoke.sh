@@ -3,13 +3,21 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_URL="${API_URL:-http://127.0.0.1:5050/api/v1}"
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+else
+  echo "ERROR: Docker Compose is required." >&2
+  exit 1
+fi
 SMOKE_EMAIL="codex-platform-smoke-20260824@example.test"
 SMOKE_PASSWORD="RuntimeSmoke-2026"
 REQUEST_ID="platform-smoke-idempotency-20260824"
 
 cleanup() {
   cd "$PROJECT_DIR"
-  docker-compose exec -T postgres sh -lc \
+  "${COMPOSE[@]}" exec -T postgres sh -lc \
     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "DELETE FROM users WHERE email = '\''codex-platform-smoke-20260824@example.test'\'';"' \
     >/dev/null
 }
@@ -23,7 +31,7 @@ register_body="$(curl -fsS -X POST "$API_URL/auth/register" \
 token="$(jq -er '.token' <<<"$register_body")"
 
 cd "$PROJECT_DIR"
-docker-compose exec -T postgres sh -lc \
+"${COMPOSE[@]}" exec -T postgres sh -lc \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "UPDATE users SET role = '\''Admin'\'' WHERE email = '\''codex-platform-smoke-20260824@example.test'\'';"' \
   >/dev/null
 login_body="$(curl -fsS -X POST "$API_URL/auth/login" \

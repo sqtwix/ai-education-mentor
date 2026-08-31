@@ -5,12 +5,21 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_URL="${API_URL:-http://127.0.0.1:5050/api/v1}"
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(basename "$PROJECT_DIR")}"
 
-for command_name in curl docker docker-compose jq od; do
+for command_name in curl docker jq od; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         echo "ERROR: $command_name is required." >&2
         exit 1
     fi
 done
+
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+    COMPOSE=(docker-compose)
+else
+    echo "ERROR: Docker Compose is required." >&2
+    exit 1
+fi
 
 cd "$PROJECT_DIR"
 suffix="$(od -An -N 8 -tx1 /dev/urandom | tr -d ' \n')"
@@ -21,7 +30,7 @@ work_dir="$(mktemp -d)"
 response_file="$work_dir/response.json"
 
 cleanup() {
-    docker-compose exec -T postgres sh -lc \
+    "${COMPOSE[@]}" exec -T postgres sh -lc \
         "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"DELETE FROM analysis_reports WHERE id = '$request_id'; DELETE FROM users WHERE email = '$email';\"" \
         >/dev/null 2>&1 || true
     rm -rf "$work_dir"

@@ -66,6 +66,8 @@ docker compose ps
 
 Он запускает frontend, API Core, PostgreSQL и AI Driver. Чтобы добавить локальную Qwen, установите в `.env` `ENABLE_LOCAL_QWEN=true` и повторите `./deploy.sh`. Для ручного Compose-запуска используйте `docker compose --profile local-ai up -d`.
 
+Единственная рекомендуемая production-точка входа — `deploy.sh` / `deploy.bat`: они создают конфигурацию, валидируют Compose и дожидаются healthchecks. Прямой `docker compose up` предназначен для разработки/диагностики и требует уже готовый `.env`.
+
 ### Frontend отдельно
 
 Нужен Node.js 20. API Core должен слушать `127.0.0.1:5050`.
@@ -81,6 +83,15 @@ npm run dev
 ### API Core отдельно
 
 Нужны .NET SDK 9, PostgreSQL и доступный AI Driver. Удобнее оставить зависимости в Compose и запускать API из IDE с эквивалентными переменными `ConnectionStrings__DefaultConnection`, `JwtSettings__*` и `AiDriver__Url`.
+
+Если нужен только Docker-backend без frontend, после создания `.env` запустите:
+
+```bash
+docker compose up -d postgres ai-driver api-core
+curl -fsS http://127.0.0.1:5050/health/ready
+```
+
+Compose дождётся healthy-состояния PostgreSQL и AI Driver перед API. При запуске API из IDE Data Protection keys хранятся в локальной игнорируемой `.dataprotection-keys/`; путь можно задать через `DataProtection__KeysPath`.
 
 ```bash
 cd api-core/ApiCore

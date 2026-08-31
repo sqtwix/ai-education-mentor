@@ -24,9 +24,15 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddControllers();
 builder.Services.AddMemoryCache();
+var dataProtectionKeysPath = builder.Configuration["DataProtection:KeysPath"];
+if (string.IsNullOrWhiteSpace(dataProtectionKeysPath))
+{
+    dataProtectionKeysPath = Path.Combine(builder.Environment.ContentRootPath, ".dataprotection-keys");
+}
+Directory.CreateDirectory(dataProtectionKeysPath);
 builder.Services.AddDataProtection()
     .SetApplicationName("AiEducationMentor")
-    .PersistKeysToFileSystem(new DirectoryInfo("/var/lib/api-core/dataprotection-keys"));
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath));
 
 var uploadOptions = builder.Configuration
     .GetSection(UploadOptions.SectionName)

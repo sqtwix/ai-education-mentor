@@ -1,38 +1,12 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal DisableDelayedExpansion
 
 echo DEPLOYING AI EDUCATION MENTOR - IOT AGENT (WINDOWS)
 
 cd /d "%~dp0"
 
-if not exist ".env" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\init_env.ps1"
-    if errorlevel 1 exit /b 1
-) else (
-    echo --> Existing .env file found.
-)
-
-if not exist "models" mkdir models
-
-rem init_env.ps1 only creates .env once and never rewrites an existing file,
-rem so an .env generated before new keys were added to env_example.txt (e.g.
-rem the QWEN_MODEL_* variables) would silently keep missing them forever.
-rem Backfill any keys present in the template but absent from .env, without
-rem touching keys that are already set (secrets included).
-powershell -NoProfile -Command "$path = '.env'; if ((Get-Item -LiteralPath $path).Length -gt 0) { $bytes = [IO.File]::ReadAllBytes($path); if ($bytes[-1] -ne 10) { [IO.File]::AppendAllText($path, [Environment]::NewLine) } }"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\init_env.ps1"
 if errorlevel 1 exit /b 1
-
-for /f "usebackq delims=" %%L in ("env_example.txt") do (
-    set "tmpl_line=%%L"
-    if not "!tmpl_line!"=="" if not "!tmpl_line:~0,1!"=="#" (
-        for /f "tokens=1 delims==" %%K in ("!tmpl_line!") do set "tmpl_key=%%K"
-        findstr /b /c:"!tmpl_key!=" ".env" >nul
-        if errorlevel 1 (
-            >>".env" echo(!tmpl_line!
-            echo --> Added missing !tmpl_key! to .env ^(default from env_example.txt^).
-        )
-    )
-)
 
 for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
     if "%%A"=="DB_PASSWORD" set "DB_PASSWORD=%%B"
@@ -42,72 +16,25 @@ for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
     if "%%A"=="QWEN_MODEL_URL" set "QWEN_MODEL_URL=%%B"
     if "%%A"=="QWEN_MODEL_SHA256" set "QWEN_MODEL_SHA256=%%B"
     if "%%A"=="FRONTEND_PORT" set "FRONTEND_PORT=%%B"
+    if "%%A"=="API_HOST_PORT" set "API_HOST_PORT=%%B"
+    if "%%A"=="AI_DRIVER_HOST_PORT" set "AI_DRIVER_HOST_PORT=%%B"
 )
 
-if not defined DB_PASSWORD (
-    echo ERROR: Set a unique DB_PASSWORD in .env and rerun deploy.bat.
-    exit /b 1
-)
-if /i "!DB_PASSWORD!"=="CHANGE_ME_STRONG_DATABASE_PASSWORD" (
-    echo ERROR: Set a unique DB_PASSWORD in .env and rerun deploy.bat.
-    exit /b 1
-)
-if not defined JWT_SECRET (
-    echo ERROR: Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.bat.
-    exit /b 1
-)
-if /i "!JWT_SECRET!"=="CHANGE_ME_MINIMUM_32_RANDOM_CHARACTERS" (
-    echo ERROR: Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.bat.
-    exit /b 1
-)
-if "!JWT_SECRET:~31,1!"=="" (
-    echo ERROR: Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.bat.
-    exit /b 1
-)
+powershell -NoProfile -Command "if ([string]::IsNullOrWhiteSpace($env:DB_PASSWORD) -or $env:DB_PASSWORD -eq 'CHANGE_ME_STRONG_DATABASE_PASSWORD') { throw 'Set a unique DB_PASSWORD in .env and rerun deploy.bat.' }; if ([string]::IsNullOrWhiteSpace($env:JWT_SECRET) -or $env:JWT_SECRET -eq 'CHANGE_ME_MINIMUM_32_RANDOM_CHARACTERS' -or $env:JWT_SECRET.Length -lt 32) { throw 'Set a unique JWT_SECRET of at least 32 characters in .env and rerun deploy.bat.' }"
+if errorlevel 1 exit /b 1
+
+setlocal EnableDelayedExpansion
+
+if not defined FRONTEND_PORT set "FRONTEND_PORT=80"
+if not defined API_HOST_PORT set "API_HOST_PORT=5050"
+if not defined AI_DRIVER_HOST_PORT set "AI_DRIVER_HOST_PORT=8000"
+powershell -NoProfile -Command "$names = 'FRONTEND_PORT','API_HOST_PORT','AI_DRIVER_HOST_PORT'; $values = @(); foreach ($name in $names) { $raw = [Environment]::GetEnvironmentVariable($name); $port = 0; if (-not [int]::TryParse($raw, [ref]$port) -or $port -lt 1 -or $port -gt 65535) { throw ($name + ' must be an integer from 1 to 65535.') }; $values += $port }; if (($values | Select-Object -Unique).Count -ne 3) { throw 'FRONTEND_PORT, API_HOST_PORT and AI_DRIVER_HOST_PORT must be different.' }"
+if errorlevel 1 exit /b 1
 
 if not defined ENABLE_LOCAL_QWEN set "ENABLE_LOCAL_QWEN=false"
-if /i not "%ENABLE_LOCAL_QWEN%"=="true" if /i not "%ENABLE_LOCAL_QWEN%"=="false" (
+if /i not "!ENABLE_LOCAL_QWEN!"=="true" if /i not "!ENABLE_LOCAL_QWEN!"=="false" (
     echo ERROR: ENABLE_LOCAL_QWEN must be true or false.
     exit /b 1
-)
-
-if /i "%ENABLE_LOCAL_QWEN%"=="true" (
-    if not defined QWEN_MODEL_FILE set "QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf"
-    if not defined QWEN_MODEL_URL set "QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
-
-    set "MODEL_FILE=!QWEN_MODEL_FILE!"
-    set "MODEL_PATH=models\!MODEL_FILE!"
-    if not exist "!MODEL_PATH!" (
-        echo --> Downloading local Qwen3 GGUF model (!MODEL_FILE!)...
-        powershell -Command "Invoke-WebRequest -Uri '!QWEN_MODEL_URL!' -OutFile '!MODEL_PATH!'"
-        if errorlevel 1 exit /b 1
-        echo --> Model downloaded successfully.
-    ) else (
-        echo --> Local GGUF model already exists in .\models, skipping download.
-    )
-
-    if not defined QWEN_MODEL_SHA256 (
-        echo ERROR: QWEN_MODEL_SHA256 must contain the approved SHA256 when ENABLE_LOCAL_QWEN=true.
-        exit /b 1
-    )
-    if "!QWEN_MODEL_SHA256:~63,1!"=="" (
-        echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
-        exit /b 1
-    )
-    if not "!QWEN_MODEL_SHA256:~64,1!"=="" (
-        echo ERROR: QWEN_MODEL_SHA256 must contain 64 hexadecimal characters.
-        exit /b 1
-    )
-    echo --> Verifying Qwen model SHA256...
-    for /f "tokens=1" %%H in ('certutil -hashfile "!MODEL_PATH!" SHA256 ^| findstr /r "^[0-9A-Fa-f][0-9A-Fa-f]"') do set "ACTUAL_SHA=%%H"
-    if /i not "!ACTUAL_SHA!"=="!QWEN_MODEL_SHA256!" (
-        echo ERROR: Qwen model checksum mismatch.
-        echo Expected: !QWEN_MODEL_SHA256!
-        echo Actual:   !ACTUAL_SHA!
-        exit /b 1
-    )
-) else (
-    echo --> Local Qwen is disabled; starting the platform without a neural model.
 )
 
 docker compose version >nul 2>&1
@@ -119,13 +46,38 @@ if not errorlevel 1 (
         echo ERROR: Docker Compose is not installed.
         exit /b 1
     )
+    docker-compose version >nul 2>&1
+    if errorlevel 1 (
+        echo ERROR: docker-compose is installed but cannot run.
+        exit /b 1
+    )
     set "COMPOSE=docker-compose"
 )
-echo --> Building production images...
+docker info >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Docker Engine is unavailable. Start Docker and rerun deploy.bat.
+    exit /b 1
+)
 set "COMPOSE_PROFILE="
-if /i "%ENABLE_LOCAL_QWEN%"=="true" (
-    set "COMPOSE_PROFILE=--profile local-ai"
+if /i "!ENABLE_LOCAL_QWEN!"=="true" set "COMPOSE_PROFILE=--profile local-ai"
+echo --> Validating Docker Compose configuration...
+!COMPOSE! !COMPOSE_PROFILE! config --quiet
+if errorlevel 1 exit /b 1
+
+if /i "!ENABLE_LOCAL_QWEN!"=="true" (
+    if not defined QWEN_MODEL_FILE set "QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf"
+    if not defined QWEN_MODEL_URL set "QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+
+    if not exist "models" mkdir models
+    echo --> Validating local Qwen model...
+    powershell -NoProfile -Command "$file = $env:QWEN_MODEL_FILE; if ([string]::IsNullOrWhiteSpace($file) -or [IO.Path]::GetFileName($file) -ne $file -or $file -in '.', '..') { throw 'QWEN_MODEL_FILE must be a file name inside .\models, without path separators.' }; if ($env:QWEN_MODEL_SHA256 -notmatch '^[0-9A-Fa-f]{64}$') { throw 'QWEN_MODEL_SHA256 must contain the approved 64-character SHA256 when ENABLE_LOCAL_QWEN=true.' }; $path = Join-Path 'models' $file; if (-not (Test-Path -LiteralPath $path)) { $uri = [Uri]$env:QWEN_MODEL_URL; if ($uri.Scheme -ne 'https') { throw 'QWEN_MODEL_URL must use HTTPS. For an offline install, copy the approved file to .\models.' }; $part = $path + '.part'; Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue; try { Write-Host ('--> Downloading local Qwen3 GGUF model (' + $file + ')...'); Invoke-WebRequest -Uri $uri -OutFile $part; $actual = (Get-FileHash -LiteralPath $part -Algorithm SHA256).Hash; if ($actual -ne $env:QWEN_MODEL_SHA256) { throw ('Qwen model checksum mismatch. Actual: ' + $actual) }; Move-Item -LiteralPath $part -Destination $path -Force } finally { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue } } else { $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash; if ($actual -ne $env:QWEN_MODEL_SHA256) { throw ('Qwen model checksum mismatch. Actual: ' + $actual) }; Write-Host '--> Local GGUF model exists and checksum is valid.' }"
+    if errorlevel 1 exit /b 1
 ) else (
+    echo --> Local Qwen is disabled; starting the platform without a neural model.
+)
+
+echo --> Building production images...
+if /i "!ENABLE_LOCAL_QWEN!"=="false" (
     rem Remove a qwen-local container left by an earlier local-ai deployment.
     rem The GGUF file is a bind mount and is not deleted.
     !COMPOSE! --profile local-ai rm -sf qwen-local >nul 2>&1
@@ -143,11 +95,44 @@ echo --> Starting Docker containers...
 !COMPOSE! !COMPOSE_PROFILE! up --no-build -d --remove-orphans
 if errorlevel 1 exit /b 1
 
+echo --> Waiting for services to become healthy...
+for %%S in (postgres ai-driver api-core frontend) do (
+    call :wait_for_service %%S
+    if errorlevel 1 exit /b 1
+)
+if /i "!ENABLE_LOCAL_QWEN!"=="true" (
+    call :wait_for_service qwen-local
+    if errorlevel 1 exit /b 1
+)
+
 echo ==================================================
 echo DEPLOYMENT SUCCESSFUL!
-if not defined FRONTEND_PORT set "FRONTEND_PORT=80"
 echo Open application in browser: http://localhost:!FRONTEND_PORT!/
-echo Backend Swagger API:        http://127.0.0.1:5050/swagger
-echo AI-Driver FastAPI Docs:     http://localhost:8000/docs
+echo Backend Swagger API:        http://127.0.0.1:!API_HOST_PORT!/swagger
+echo AI-Driver FastAPI Docs:     http://127.0.0.1:!AI_DRIVER_HOST_PORT!/docs
 echo ==================================================
-pause
+exit /b 0
+
+:wait_for_service
+set "WAIT_SERVICE=%~1"
+for /l %%I in (1,1,150) do (
+    set "WAIT_CONTAINER="
+    for /f "usebackq delims=" %%C in (`!COMPOSE! !COMPOSE_PROFILE! ps -q !WAIT_SERVICE! 2^>nul`) do set "WAIT_CONTAINER=%%C"
+    if defined WAIT_CONTAINER (
+        for /f "usebackq delims=" %%H in (`docker inspect --format "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" !WAIT_CONTAINER! 2^>nul`) do set "WAIT_STATE=%%H"
+        if /i "!WAIT_STATE!"=="healthy" (
+            echo     !WAIT_SERVICE!: healthy
+            exit /b 0
+        )
+        if /i "!WAIT_STATE!"=="unhealthy" goto :service_failed
+        if /i "!WAIT_STATE!"=="exited" goto :service_failed
+        if /i "!WAIT_STATE!"=="dead" goto :service_failed
+    )
+    >nul ping 127.0.0.1 -n 3
+)
+echo ERROR: Timed out waiting for !WAIT_SERVICE!. Check: !COMPOSE! logs --tail=200 !WAIT_SERVICE!
+exit /b 1
+
+:service_failed
+echo ERROR: !WAIT_SERVICE! entered state '!WAIT_STATE!'. Check: !COMPOSE! logs --tail=200 !WAIT_SERVICE!
+exit /b 1

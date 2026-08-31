@@ -10,10 +10,11 @@ services:
       - ASPNETCORE_ENVIRONMENT=${ASPNETCORE_ENVIRONMENT:-Production}
       - ConnectionStrings__DefaultConnection=Host=${DB_HOST:-postgres};Port=${DB_PORT:-5432};Database=${DB_NAME:-aichecker};Username=${DB_USER:-aichecker_user};Password=${DB_PASSWORD:?DB_PASSWORD must be set in .env}
       - JwtSettings__Secret=${JWT_SECRET:?JWT_SECRET must be set in .env}
-      - JwtSettings__Issuer=${JWT_ISSUER:-ai-review-analyzer}
-      - JwtSettings__Audience=${JWT_AUDIENCE:-ai-review-analyzer-frontend}
+      - JwtSettings__Issuer=${JWT_ISSUER:-AiCheckerApiCore}
+      - JwtSettings__Audience=${JWT_AUDIENCE:-AiCheckerFrontend}
       - JwtSettings__ExpiryMinutes=${JWT_EXPIRY_MINUTES:-1440}
       - AiDriver__Url=http://ai-driver:8000
+      - DataProtection__KeysPath=/var/lib/api-core/dataprotection-keys
       - AnalysisQueue__MaxAttempts=${ANALYSIS_QUEUE_MAX_ATTEMPTS:-5}
       - UploadLimits__MaxFileBytes=${UPLOAD_MAX_FILE_BYTES:-26214400}
       - UploadLimits__MaxRequestBytes=${UPLOAD_MAX_REQUEST_BYTES:-52428800}
@@ -103,14 +104,14 @@ services:
     ports:
       # Внутренний сервис остаётся доступен администратору на localhost,
       # но не публикуется в локальную сеть в обход JWT-защищённого API Core.
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${AI_DRIVER_HOST_PORT:-8000}:8000"
     environment:
       # DeepSeek конфигурация
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
       # SberGPT конфигурация
-      - SBERGPT_API_KEY=${SBERGPT_API_KEY}
+      - SBERGPT_API_KEY=${SBERGPT_API_KEY:-}
       - SBERGPT_BASE_URL=${SBERGPT_BASE_URL:-https://gigachat.devices.sberbank.ru/api/v1/}
       - SBERGPT_MODEL=${SBERGPT_MODEL:-GigaChat-Pro}
       # Локальная Qwen модель (llama.cpp)

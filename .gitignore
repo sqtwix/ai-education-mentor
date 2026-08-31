@@ -13,4 +13,5 @@ dist/
 frontend/.env
 /models/
 temp_uploads/
+.dataprotection-keys/
 .tmp/

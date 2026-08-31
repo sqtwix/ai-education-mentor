@@ -3,6 +3,14 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_URL="${API_URL:-http://127.0.0.1:5050/api/v1}"
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+else
+  echo "ERROR: Docker Compose is required." >&2
+  exit 1
+fi
 USER_COUNT="${USER_COUNT:-3}"
 POLL_TIMEOUT_SECONDS="${POLL_TIMEOUT_SECONDS:-600}"
 RESULT_FILE="${RESULT_FILE:-}"
@@ -16,12 +24,12 @@ cleanup() {
   cd "$PROJECT_DIR"
   for index in $(seq 0 $((USER_COUNT - 1))); do
     if [ -n "${task_ids[$index]:-}" ]; then
-      docker-compose exec -T postgres sh -lc \
+      "${COMPOSE[@]}" exec -T postgres sh -lc \
         "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"DELETE FROM analysis_reports WHERE id = '${task_ids[$index]}';\"" \
         >/dev/null 2>&1 || true
     fi
     if [ -n "${emails[$index]:-}" ]; then
-      docker-compose exec -T postgres sh -lc \
+      "${COMPOSE[@]}" exec -T postgres sh -lc \
         "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"DELETE FROM users WHERE email = '${emails[$index]}';\"" \
         >/dev/null 2>&1 || true
     fi

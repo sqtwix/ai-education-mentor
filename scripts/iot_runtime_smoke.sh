@@ -3,6 +3,14 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 API_URL="${API_URL:-http://127.0.0.1:5050/api/v1}"
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+  COMPOSE=(docker-compose)
+else
+  echo "ERROR: Docker Compose is required." >&2
+  exit 1
+fi
 suffix="$(od -An -N 8 -tx1 /dev/urandom | tr -d ' \n')"
 email="iot-runtime-$suffix@example.test"
 password="Runtime-IOT-$suffix!"
@@ -11,7 +19,7 @@ work_dir="$(mktemp -d)"
 
 cleanup() {
   cd "$PROJECT_DIR"
-  docker-compose exec -T postgres sh -lc \
+  "${COMPOSE[@]}" exec -T postgres sh -lc \
     "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -v ON_ERROR_STOP=1 -c \"DELETE FROM analysis_reports WHERE id = '$request_id'; DELETE FROM users WHERE email = '$email';\"" \
     >/dev/null 2>&1 || true
   rm -rf "$work_dir"
