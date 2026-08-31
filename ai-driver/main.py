@@ -32,7 +32,7 @@ for handler in logging.getLogger().handlers:
 
 app = FastAPI(
     title="Agents API",
-    description="Документация к AgentsAPI API. Поддерживает DeepSeek, SberGPT и локальный Qwen.",
+    description="Документация Agents API: DeepSeek, SberGPT и локальные OpenAI-compatible модели.",
     version="1.0.0",
     swagger_ui_parameters={"syntaxHighlight.theme": "obsidian"}
 )

@@ -33,6 +33,27 @@ class AgentClientJsonTests(unittest.TestCase):
             {"stages": [], "limitations": []},
         )
 
+    @patch("backend.agent_client.OpenAI")
+    def test_generic_local_model_does_not_receive_qwen_directive(self, openai_mock):
+        api = MagicMock()
+        api.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"status":"ok"}'))]
+        )
+        openai_mock.return_value = api
+
+        client = AgentClient(
+            api_key="not-needed",
+            base_url="http://local-llm:8080/v1",
+            agent_model="generic-model",
+            specialization="competency-analyst",
+            local_runtime=True,
+            disable_thinking=False,
+        )
+        client.execute("Return JSON.", "{}")
+
+        sent_messages = api.chat.completions.create.call_args.kwargs["messages"]
+        self.assertFalse(sent_messages[0]["content"].endswith("/no_think"))
+
     def test_only_missing_closing_delimiters_are_repaired(self):
         self.assertEqual(
             AgentClient._parse_json_object('{"stages":[{"courses":[]}'),

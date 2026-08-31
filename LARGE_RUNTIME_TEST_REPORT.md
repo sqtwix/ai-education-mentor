@@ -90,7 +90,7 @@
 - форматы JSON, CSV, XLSX, XLS и ZIP: passed;
 - ACL: 12/12 passed;
 - platform smoke: cache HIT, idempotency и 429 rate limit подтверждены;
-- frontend, api-core, ai-driver, PostgreSQL и qwen-local: healthy;
+- frontend, api-core, ai-driver, PostgreSQL и локальный модельный сервис: healthy;
 - restart count после финальной сборки: 0;
 - OOM: false для всех проверенных сервисов.
 

@@ -13,7 +13,7 @@ FRONTEND_PORT="${FRONTEND_PORT:-80}" "$SCRIPT_DIR/scripts/init_env.sh"
 while IFS='=' read -r key value; do
     value="${value%$'\r'}"
     case "$key" in
-        DB_PASSWORD|JWT_SECRET|ENABLE_LOCAL_QWEN|QWEN_MODEL_FILE|QWEN_MODEL_URL|QWEN_MODEL_SHA256|FRONTEND_PORT|API_HOST_PORT|AI_DRIVER_HOST_PORT)
+        DB_PASSWORD|JWT_SECRET|ENABLE_LOCAL_LLM|LOCAL_LLM_MODE|LOCAL_LLM_MODEL_FILE|LOCAL_LLM_MODEL_URL|LOCAL_LLM_MODEL_SHA256|LOCAL_LLM_BASE_URL|LOCAL_LLM_MODEL|LOCAL_LLM_DISABLE_THINKING|LOCAL_LLM_CONTEXT_SIZE|LOCAL_LLM_THREADS|LOCAL_LLM_BATCH_SIZE|LOCAL_LLM_PARALLEL|FRONTEND_PORT|API_HOST_PORT|AI_DRIVER_HOST_PORT)
             printf -v "$key" '%s' "$value"
             ;;
     esac
@@ -48,17 +48,31 @@ if [ "$FRONTEND_PORT" = "$API_HOST_PORT" ] || [ "$FRONTEND_PORT" = "$AI_DRIVER_H
     exit 1
 fi
 
-# 2. Optional local AI model (Qwen3 GGUF)
-ENABLE_LOCAL_QWEN="${ENABLE_LOCAL_QWEN:-false}"
-ENABLE_LOCAL_QWEN_NORMALIZED="$(printf '%s' "$ENABLE_LOCAL_QWEN" | tr '[:upper:]' '[:lower:]')"
-case "$ENABLE_LOCAL_QWEN_NORMALIZED" in
-    true) ENABLE_LOCAL_QWEN=true ;;
-    false) ENABLE_LOCAL_QWEN=false ;;
+# 2. Optional local/OpenAI-compatible model
+ENABLE_LOCAL_LLM="${ENABLE_LOCAL_LLM:-false}"
+ENABLE_LOCAL_LLM_NORMALIZED="$(printf '%s' "$ENABLE_LOCAL_LLM" | tr '[:upper:]' '[:lower:]')"
+case "$ENABLE_LOCAL_LLM_NORMALIZED" in
+    true) ENABLE_LOCAL_LLM=true ;;
+    false) ENABLE_LOCAL_LLM=false ;;
     *)
-        echo "ERROR: ENABLE_LOCAL_QWEN must be true or false." >&2
+        echo "ERROR: ENABLE_LOCAL_LLM must be true or false." >&2
         exit 1
         ;;
 esac
+LOCAL_LLM_MODE="$(printf '%s' "${LOCAL_LLM_MODE:-managed}" | tr '[:upper:]' '[:lower:]')"
+case "$LOCAL_LLM_MODE" in
+    managed|external) ;;
+    *)
+        echo "ERROR: LOCAL_LLM_MODE must be managed or external." >&2
+        exit 1
+        ;;
+esac
+if [ -n "${LOCAL_LLM_DISABLE_THINKING:-}" ]; then
+    case "$(printf '%s' "$LOCAL_LLM_DISABLE_THINKING" | tr '[:upper:]' '[:lower:]')" in
+        true|false) ;;
+        *) echo "ERROR: LOCAL_LLM_DISABLE_THINKING must be empty, true or false." >&2; exit 1 ;;
+    esac
+fi
 
 # Resolve Compose once and validate the fully interpolated contract before
 # downloading a model or building images.
@@ -76,7 +90,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 compose_cmd() {
-    if [ "$ENABLE_LOCAL_QWEN" = true ]; then
+    if [ "$ENABLE_LOCAL_LLM" = true ] && [ "$LOCAL_LLM_MODE" = managed ]; then
         "${COMPOSE[@]}" --profile local-ai "$@"
     else
         "${COMPOSE[@]}" "$@"
@@ -85,19 +99,38 @@ compose_cmd() {
 echo "--> Validating Docker Compose configuration..."
 compose_cmd config --quiet
 
-if [ "$ENABLE_LOCAL_QWEN" = true ]; then
-    MODEL_FILE="${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}"
-    MODEL_URL="${QWEN_MODEL_URL:-https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf}"
+if [ "$ENABLE_LOCAL_LLM" = true ] && [ "$LOCAL_LLM_MODE" = managed ]; then
+    MODEL_FILE="${LOCAL_LLM_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}"
+    MODEL_URL="${LOCAL_LLM_MODEL_URL:-https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf}"
     MODEL_PATH="models/$MODEL_FILE"
 
     if [[ "$MODEL_FILE" == */* ]] || [[ "$MODEL_FILE" == *\\* ]] || [ "$MODEL_FILE" = "." ] || [ "$MODEL_FILE" = ".." ]; then
-        echo "ERROR: QWEN_MODEL_FILE must be a file name inside ./models, without path separators." >&2
+        echo "ERROR: LOCAL_LLM_MODEL_FILE must be a file name inside ./models, without path separators." >&2
         exit 1
     fi
-    if [ -z "${QWEN_MODEL_SHA256:-}" ] || ! [[ "$QWEN_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
-        echo "ERROR: QWEN_MODEL_SHA256 must contain the approved 64-character SHA256 when ENABLE_LOCAL_QWEN=true." >&2
+    case "$MODEL_FILE" in
+        *.gguf|*.GGUF) ;;
+        *) echo "ERROR: managed local models must use the .gguf extension." >&2; exit 1 ;;
+    esac
+    if [ -n "${LOCAL_LLM_BASE_URL:-}" ] && [ "$LOCAL_LLM_BASE_URL" != "http://local-llm:8080/v1" ]; then
+        echo "ERROR: LOCAL_LLM_BASE_URL must be empty in managed mode; use external mode for another endpoint." >&2
         exit 1
     fi
+    if [ -z "${LOCAL_LLM_MODEL_SHA256:-}" ] || ! [[ "$LOCAL_LLM_MODEL_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+        echo "ERROR: LOCAL_LLM_MODEL_SHA256 must contain the approved 64-character SHA256 in managed mode." >&2
+        exit 1
+    fi
+    validate_managed_number() {
+        local name="$1" value="$2" minimum="$3" maximum="$4"
+        if ! [[ "$value" =~ ^[0-9]+$ ]] || [ "$value" -lt "$minimum" ] || [ "$value" -gt "$maximum" ]; then
+            echo "ERROR: ${name} must be an integer from ${minimum} to ${maximum}." >&2
+            exit 1
+        fi
+    }
+    validate_managed_number LOCAL_LLM_CONTEXT_SIZE "${LOCAL_LLM_CONTEXT_SIZE:-4096}" 512 131072
+    validate_managed_number LOCAL_LLM_THREADS "${LOCAL_LLM_THREADS:-4}" 1 256
+    validate_managed_number LOCAL_LLM_BATCH_SIZE "${LOCAL_LLM_BATCH_SIZE:-512}" 1 8192
+    validate_managed_number LOCAL_LLM_PARALLEL "${LOCAL_LLM_PARALLEL:-1}" 1 16
 
     calculate_sha256() {
         local path="$1"
@@ -111,18 +144,18 @@ if [ "$ENABLE_LOCAL_QWEN" = true ]; then
         fi
     }
 
-    EXPECTED_SHA_NORMALIZED="$(printf '%s' "$QWEN_MODEL_SHA256" | tr '[:upper:]' '[:lower:]')"
+    EXPECTED_SHA_NORMALIZED="$(printf '%s' "$LOCAL_LLM_MODEL_SHA256" | tr '[:upper:]' '[:lower:]')"
     mkdir -p models
     if [ ! -f "$MODEL_PATH" ]; then
         if [[ "$MODEL_URL" != https://* ]]; then
-            echo "ERROR: QWEN_MODEL_URL must use HTTPS. For an offline install, copy the approved file to ./models." >&2
+            echo "ERROR: LOCAL_LLM_MODEL_URL must use HTTPS. For an offline install, copy the approved GGUF to ./models." >&2
             exit 1
         fi
         if ! command -v curl >/dev/null 2>&1; then
             echo "ERROR: curl is required to download the local model." >&2
             exit 1
         fi
-        echo "--> Downloading local Qwen3 GGUF model ($MODEL_FILE)..."
+        echo "--> Downloading managed GGUF model ($MODEL_FILE)..."
         MODEL_PART="${MODEL_PATH}.part"
         trap 'rm -f "${MODEL_PART:-}"' EXIT
         rm -f "$MODEL_PART"
@@ -130,8 +163,8 @@ if [ "$ENABLE_LOCAL_QWEN" = true ]; then
         ACTUAL_SHA="$(calculate_sha256 "$MODEL_PART")"
         ACTUAL_SHA_NORMALIZED="$(printf '%s' "$ACTUAL_SHA" | tr '[:upper:]' '[:lower:]')"
         if [ "$ACTUAL_SHA_NORMALIZED" != "$EXPECTED_SHA_NORMALIZED" ]; then
-            echo "ERROR: Downloaded Qwen model checksum mismatch." >&2
-            echo "Expected: $QWEN_MODEL_SHA256" >&2
+            echo "ERROR: Downloaded local model checksum mismatch." >&2
+            echo "Expected: $LOCAL_LLM_MODEL_SHA256" >&2
             echo "Actual:   $ACTUAL_SHA" >&2
             exit 1
         fi
@@ -142,24 +175,40 @@ if [ "$ENABLE_LOCAL_QWEN" = true ]; then
         echo "--> Local GGUF model already exists in ./models, skipping download."
     fi
 
-    echo "--> Verifying Qwen model SHA256..."
+    echo "--> Verifying local model SHA256..."
     ACTUAL_SHA="$(calculate_sha256 "$MODEL_PATH")"
     ACTUAL_SHA_NORMALIZED="$(printf '%s' "$ACTUAL_SHA" | tr '[:upper:]' '[:lower:]')"
     if [ "$ACTUAL_SHA_NORMALIZED" != "$EXPECTED_SHA_NORMALIZED" ]; then
-        echo "ERROR: Qwen model checksum mismatch."
-        echo "Expected: $QWEN_MODEL_SHA256"
+        echo "ERROR: Local model checksum mismatch."
+        echo "Expected: $LOCAL_LLM_MODEL_SHA256"
         echo "Actual:   $ACTUAL_SHA"
         exit 1
     fi
+elif [ "$ENABLE_LOCAL_LLM" = true ]; then
+    if [[ "${LOCAL_LLM_BASE_URL:-}" != http://* ]] && [[ "${LOCAL_LLM_BASE_URL:-}" != https://* ]]; then
+        echo "ERROR: LOCAL_LLM_BASE_URL must be an HTTP(S) OpenAI-compatible /v1 endpoint in external mode." >&2
+        exit 1
+    fi
+    case "$LOCAL_LLM_BASE_URL" in
+        http://localhost*|https://localhost*|http://127.0.0.1*|https://127.0.0.1*|http://\[::1\]*|https://\[::1\]*)
+            echo "ERROR: localhost in LOCAL_LLM_BASE_URL points to the AI Driver container. Use host.docker.internal for a model server running on the Docker host." >&2
+            exit 1
+            ;;
+    esac
+    if [ -z "${LOCAL_LLM_MODEL:-}" ]; then
+        echo "ERROR: LOCAL_LLM_MODEL is required in external mode." >&2
+        exit 1
+    fi
+    echo "--> Using external OpenAI-compatible local model endpoint."
 else
-    echo "--> Local Qwen is disabled; starting the platform without a neural model."
+    echo "--> Local LLM is disabled; starting the platform without a neural model."
 fi
 
 # 3. Docker Container Deployment
-if [ "$ENABLE_LOCAL_QWEN" = false ]; then
-    # Compose does not automatically stop a profile container left by an
-    # earlier deployment. Remove only qwen-local; the GGUF bind mount remains.
-    "${COMPOSE[@]}" --profile local-ai rm -sf qwen-local >/dev/null 2>&1 || true
+if [ "$ENABLE_LOCAL_LLM" = false ] || [ "$LOCAL_LLM_MODE" = external ]; then
+    # Stop a managed model left by an earlier deployment. The GGUF bind mount
+    # and all persistent application volumes remain untouched.
+    "${COMPOSE[@]}" --profile local-ai rm -sf local-llm >/dev/null 2>&1 || true
 fi
 
 echo "--> Building production images..."
@@ -176,8 +225,8 @@ compose_cmd up --no-build -d --remove-orphans
 
 echo "--> Waiting for services to become healthy..."
 SERVICES=(postgres ai-driver api-core frontend)
-if [ "$ENABLE_LOCAL_QWEN" = true ]; then
-    SERVICES+=(qwen-local)
+if [ "$ENABLE_LOCAL_LLM" = true ] && [ "$LOCAL_LLM_MODE" = managed ]; then
+    SERVICES+=(local-llm)
 fi
 deadline=$((SECONDS + 300))
 for service in "${SERVICES[@]}"; do
@@ -201,6 +250,15 @@ for service in "${SERVICES[@]}"; do
         sleep 2
     done
 done
+
+if [ "$ENABLE_LOCAL_LLM" = true ]; then
+    echo "--> Verifying local model inference compatibility..."
+    if ! compose_cmd exec -T ai-driver python -c \
+        'from backend.model_availability import verify_local_inference; raise SystemExit(0 if verify_local_inference() else 1)'; then
+        echo "ERROR: The configured local model endpoint did not complete a minimal OpenAI-compatible chat request." >&2
+        exit 1
+    fi
+fi
 
 echo "=================================================="
 echo "DEPLOYMENT SUCCESSFUL!"

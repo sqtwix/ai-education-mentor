@@ -100,7 +100,7 @@ class AgentManagerFallbackTests(unittest.TestCase):
     def setUp(self):
         self.manager = AgentManager(FailingAgentFactory())
 
-    @patch("backend.model_availability.qwen_local_ready", return_value=False)
+    @patch("backend.model_availability.local_llm_ready", return_value=False)
     @patch.dict("os.environ", {"DEEPSEEK_API_KEY": "", "SBERGPT_API_KEY": ""}, clear=False)
     def test_model_availability_does_not_claim_missing_providers(self, _qwen_ready):
         response = get_model_availability()
@@ -108,11 +108,11 @@ class AgentManagerFallbackTests(unittest.TestCase):
 
         self.assertFalse(availability["deepseek"]["configured"])
         self.assertFalse(availability["sbergpt"]["configured"])
-        self.assertFalse(availability["qwen_local"]["configured"])
+        self.assertFalse(availability["local_llm"]["configured"])
         self.assertFalse(response["generation_available"])
         self.assertEqual(response["operating_mode"], "no-ai")
 
-    @patch("backend.model_availability.qwen_local_ready", return_value=True)
+    @patch("backend.model_availability.local_llm_ready", return_value=True)
     @patch.dict(
         "os.environ",
         {"DEEPSEEK_API_KEY": "configured", "SBERGPT_API_KEY": "configured"},
@@ -126,20 +126,21 @@ class AgentManagerFallbackTests(unittest.TestCase):
         self.assertTrue(response["generation_available"])
         self.assertEqual(response["operating_mode"], "ai-enabled")
 
-    @patch("backend.model_availability.qwen_local_ready", return_value=True)
+    @patch("backend.model_availability.local_llm_ready", return_value=True)
     @patch.dict(
         "os.environ",
         {
-            "QWEN_LOCAL_MODEL": "local-model",
-            "QWEN_MODEL_FILE": "Qwen3-1.7B-Q4_K_M.gguf",
+            "LOCAL_LLM_MODE": "managed",
+            "LOCAL_LLM_MODEL": "local-model",
+            "LOCAL_LLM_MODEL_FILE": "Qwen3-1.7B-Q4_K_M.gguf",
         },
         clear=False,
     )
     def test_local_model_reports_actual_gguf_file(self, _qwen_ready):
         availability = {item["id"]: item for item in get_model_availability()["models"]}
 
-        self.assertEqual(availability["qwen_local"]["model"], "Qwen3-1.7B-Q4_K_M.gguf")
-        metadata = self.manager._generation_metadata("qwen_local", "validated")
+        self.assertEqual(availability["local_llm"]["model"], "Qwen3-1.7B-Q4_K_M.gguf")
+        metadata = self.manager._generation_metadata("local_llm", "validated")
         self.assertEqual(metadata["model_version"], "Qwen3-1.7B-Q4_K_M.gguf")
 
     def test_fallback_is_degraded_and_excludes_completed_courses(self):
@@ -223,14 +224,14 @@ class AgentManagerFallbackTests(unittest.TestCase):
         self.assertNotIn("Тестовый ответ модели", result["trajectory"]["summary"])
         self.assertNotIn("Бенчмарк коллег отсутствует", courses[0]["evidence_sources"])
 
-    @patch("backend.agent_manager.qwen_local_ready", return_value=True)
+    @patch("backend.agent_manager.local_llm_ready", return_value=True)
     def test_later_agents_still_run_when_first_agent_response_is_rejected(self, _qwen_ready):
         official_course = self.manager.catalog[0]
         factory = FirstAgentFailsFactory(official_course)
         manager = AgentManager(factory)
         payload = json.dumps({
             "request_id": "partial-agent-failure",
-            "model_type": "qwen_local",
+            "model_type": "local_llm",
             "employee": {
                 "fio": "Тестовый профиль",
                 "position": "Главный специалист",
@@ -240,7 +241,7 @@ class AgentManagerFallbackTests(unittest.TestCase):
             },
         }, ensure_ascii=False)
 
-        result = json.loads(manager.start_qwen_local_processing(payload))
+        result = json.loads(manager.start_local_llm_processing(payload))
 
         self.assertEqual(factory.calls, [1, 1, 1])
         self.assertEqual(result["quality_status"], "degraded")
@@ -250,7 +251,7 @@ class AgentManagerFallbackTests(unittest.TestCase):
         )
 
     @patch("backend.agent_manager.time.sleep")
-    @patch("backend.agent_manager.qwen_local_ready", side_effect=[False, True])
+    @patch("backend.agent_manager.local_llm_ready", side_effect=[False, True])
     def test_local_pipeline_waits_for_model_readiness(self, qwen_ready, sleep_mock):
         self.assertTrue(self.manager._wait_for_local_model())
         self.assertEqual(qwen_ready.call_count, 2)
@@ -278,7 +279,7 @@ class AgentManagerFallbackTests(unittest.TestCase):
 
         agent = TransientAgent()
         result = self.manager._execute_agent_with_recovery(
-            agent, "system", "{}", "qwen_local"
+            agent, "system", "{}", "local_llm"
         )
 
         self.assertEqual(result, '{"stages": []}')
@@ -361,6 +362,31 @@ class AgentManagerFallbackTests(unittest.TestCase):
         self.assertTrue(all("ГГС_ID_" in agent_input for agent_input in factory.inputs))
         self.assertTrue(all("ivanov@example.org" not in agent_input for agent_input in factory.inputs))
         self.assertTrue(all("+7 921 123-45-67" not in agent_input for agent_input in factory.inputs))
+
+    @patch("backend.agent_manager.local_llm_ready", return_value=True)
+    @patch.dict("os.environ", {"LOCAL_LLM_MODE": "external"}, clear=False)
+    def test_external_local_endpoint_is_not_treated_as_trusted_pii_boundary(self, _ready):
+        factory = RecordingAgentFactory()
+        manager = AgentManager(factory)
+        real_fio = "Петров Пётр Петрович"
+        payload = json.dumps({
+            "request_id": "external-local-pii-test",
+            "model_type": "local_llm",
+            "employee": {
+                "fio": real_fio,
+                "position": "Главный специалист",
+                "department": "Тестовое ведомство",
+                "career_goal": f"Развитие {real_fio}, petrov@example.org",
+                "learning_history": [],
+            },
+        }, ensure_ascii=False)
+
+        manager.start_local_llm_processing(payload)
+
+        self.assertEqual(len(factory.inputs), 3)
+        self.assertTrue(all(real_fio not in agent_input for agent_input in factory.inputs))
+        self.assertTrue(all("ГГС_ID_" in agent_input for agent_input in factory.inputs))
+        self.assertTrue(all("petrov@example.org" not in agent_input for agent_input in factory.inputs))
 
     def test_public_benchmarks_never_include_employee_profiles(self):
         public_benchmarks = self.manager.get_public_benchmarks()

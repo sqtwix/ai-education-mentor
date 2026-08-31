@@ -65,7 +65,7 @@ for index in $(seq 0 $((USER_COUNT - 1))); do
     --arg completed "$completed_course" '
       {
         request_id: $request_id,
-        model_type: "qwen_local",
+        model_type: "local_llm",
         employee: {
           fio: $fio,
           position: "Главный специалист",

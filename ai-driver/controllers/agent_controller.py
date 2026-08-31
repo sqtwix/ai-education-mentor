@@ -30,14 +30,18 @@ class AgentController:
             logger.error("SberGPT controller error (%s)", type(e).__name__)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обработать запрос SberGPT.")
 
-    async def get_qwen_local_data_analysis(self, request: TrajectoryRequest):
+    async def get_local_llm_data_analysis(self, request: TrajectoryRequest):
         try:
             body_str = request.model_dump_json(exclude_none=True)
-            result_str = await run_in_threadpool(self.agent_manager.start_qwen_local_processing, body_str)
+            result_str = await run_in_threadpool(self.agent_manager.start_local_llm_processing, body_str)
             return JSONResponse(content=json.loads(result_str), status_code=status.HTTP_200_OK)
         except Exception as e:
-            logger.error("Qwen local controller error (%s)", type(e).__name__)
+            logger.error("Local LLM controller error (%s)", type(e).__name__)
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Не удалось обработать запрос локальной модели.")
+
+    async def get_qwen_local_data_analysis(self, request: TrajectoryRequest):
+        """Compatibility route for API Core versions that still use qwen_local."""
+        return await self.get_local_llm_data_analysis(request)
 
     async def get_courses_catalog(self):
         try:

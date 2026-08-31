@@ -30,7 +30,8 @@
 - [x] API Core и AI-driver работают от непривилегированных пользователей, с read-only root filesystem и `no-new-privileges`; временные upload-файлы вынесены в ограниченный tmpfs.
 - [x] Docker JSON-логи всех сервисов ограничены ротацией `10m × 5`, чтобы длительная эксплуатация не заполняла диск.
 - [x] Локальный model endpoint не публикуется на хосте; при включении `local-ai` llama.cpp закреплён immutable digest, а модель и deploy проверяются обязательным SHA256.
-- [x] Базовый стек запускается при `ENABLE_LOCAL_QWEN=false` без GGUF и облачных ключей; каталог, аналитика, аккаунты, история и настройки доступны, генерация возвращает `MODEL_UNAVAILABLE`.
+- [x] Базовый стек запускается при `ENABLE_LOCAL_LLM=false` без GGUF и облачных ключей; каталог, аналитика, аккаунты, история и настройки доступны, генерация возвращает `MODEL_UNAVAILABLE`.
+- [x] Локальный provider поддерживает managed GGUF и external OpenAI-compatible endpoint; deploy проверяет `/models` и минимальный chat inference, а старые `QWEN_*` мигрируются без потери значений.
 - [x] `./scripts/no_ai_runtime_smoke.sh` подтверждает readiness базового стека, `operating_mode=no-ai`, доступность не-ИИ API и отсутствие новой задачи в очереди после отклонённой генерации.
 
 ## Данные и рекомендации

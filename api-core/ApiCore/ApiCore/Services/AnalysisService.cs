@@ -248,6 +248,7 @@ public sealed class AnalysisService
     private static string GetEndpoint(string modelType) => modelType switch
     {
         "sbergpt" => "/agents/get_sbergpt_data_analysis",
+        "local_llm" => "/agents/get_local_llm_data_analysis",
         "qwen_local" => "/agents/get_qwen_local_data_analysis",
         _ => "/agents/get_deepseek_data_analysis"
     };

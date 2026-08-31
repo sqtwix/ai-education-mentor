@@ -83,7 +83,7 @@ jq -e '.generation_available == false and .operating_mode == "no-ai"' "$response
 
 generation_payload="$(jq -nc --arg request_id "$request_id" '{
     request_id:$request_id,
-    model_type:"qwen_local",
+    model_type:"local_llm",
     employee:{
         fio:"Тестовый профиль без AI",
         position:"Главный специалист",
@@ -95,14 +95,21 @@ generation_payload="$(jq -nc --arg request_id "$request_id" '{
 assert_code 503 "$(request_code "$token" POST '/analysis/generate-trajectory' "$generation_payload")" "generation without model"
 jq -e '.code == "MODEL_UNAVAILABLE"' "$response_file" >/dev/null
 
+# Backward-compatible clients may still submit the former provider id. It must
+# normalize to local_llm, not become an unknown-model error or create a task.
+legacy_payload="$(printf '%s' "$generation_payload" | jq '.request_id += "-legacy" | .model_type = "qwen_local"')"
+assert_code 503 "$(request_code "$token" POST '/analysis/generate-trajectory' "$legacy_payload")" "legacy local provider alias"
+jq -e '.code == "MODEL_UNAVAILABLE"' "$response_file" >/dev/null
+
 assert_code 200 "$(request_code "$token" GET '/analysis/history')" "history after rejected generation"
 jq -e --arg request_id "$request_id" 'all(.[]; .id != $request_id)' "$response_file" >/dev/null
+jq -e --arg request_id "${request_id}-legacy" 'all(.[]; .id != $request_id)' "$response_file" >/dev/null
 
 if docker ps \
     --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-    --filter 'label=com.docker.compose.service=qwen-local' \
-    --format '{{.ID}}' | grep -q .; then
-    echo "ERROR: qwen-local is running in no-AI mode." >&2
+    --format '{{.Label "com.docker.compose.service"}}' \
+    | grep -Eq '^(local-llm|qwen-local)$'; then
+    echo "ERROR: a managed local model container is running in no-AI mode." >&2
     exit 1
 fi
 

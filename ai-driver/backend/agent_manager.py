@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Set, Tuple, TYPE_CHECKING
 
-from backend.model_availability import qwen_local_ready
+from backend.model_availability import local_llm_mode, local_llm_ready
 
 if TYPE_CHECKING:
     from backend.agent_factory import AgentFactory
@@ -71,8 +71,16 @@ class AgentManager:
     def start_sbergpt_processing(self, input_data: str) -> str:
         return self._run_pipeline(input_data, "sbergpt")
 
+    def start_local_llm_processing(self, input_data: str) -> str:
+        return self._run_pipeline(input_data, "local_llm")
+
     def start_qwen_local_processing(self, input_data: str) -> str:
-        return self._run_pipeline(input_data, "qwen_local")
+        """Backward-compatible entrypoint for tasks created before local_llm."""
+        return self.start_local_llm_processing(input_data)
+
+    @staticmethod
+    def _is_local_model(model_type: str) -> bool:
+        return model_type in {"local_llm", "qwen_local", "qwen", "local"}
 
     @staticmethod
     def _wait_for_local_model() -> bool:
@@ -84,7 +92,7 @@ class AgentManager:
         poll_seconds = max(1, min(poll_seconds, 10))
         deadline = time.monotonic() + timeout_seconds
         while True:
-            if qwen_local_ready():
+            if local_llm_ready():
                 return True
             if time.monotonic() >= deadline:
                 return False
@@ -116,7 +124,7 @@ class AgentManager:
             return agent.execute(system_prompt, input_data)
         except Exception as exception:
             if (
-                model_type == "qwen_local"
+                self._is_local_model(model_type)
                 and self._is_model_transport_failure(exception)
                 and self._wait_for_local_model()
             ):
@@ -163,16 +171,22 @@ class AgentManager:
         model_env = {
             "deepseek": "DEEPSEEK_MODEL",
             "sbergpt": "SBERGPT_MODEL",
-            "qwen_local": "QWEN_LOCAL_MODEL",
+            "local_llm": "LOCAL_LLM_MODEL",
+            "qwen_local": "LOCAL_LLM_MODEL",
         }
         default_model = {
             "deepseek": "deepseek-chat",
             "sbergpt": "GigaChat-Pro",
+            "local_llm": "local-model",
             "qwen_local": "local-model",
         }
         model_version = os.getenv(model_env.get(model_type, ""), default_model.get(model_type, model_type))
-        if model_type == "qwen_local":
-            model_version = (os.getenv("QWEN_MODEL_FILE") or model_version).strip()
+        if self._is_local_model(model_type) and local_llm_mode() == "managed":
+            model_version = (
+                os.getenv("LOCAL_LLM_MODEL_FILE")
+                or os.getenv("QWEN_MODEL_FILE")
+                or model_version
+            ).strip()
         return {
             "generation_mode": "fallback" if quality_status == "degraded" else "llm",
             "quality_status": quality_status,
@@ -460,8 +474,8 @@ class AgentManager:
             req_data = json.loads(input_data)
             request_id = str(req_data.get("request_id", req_data.get("batch_id", "")))
             self._set_progress(request_id, "profile_analysis", "Анализируем профиль и историю обучения.", 30)
-            if model_type == "qwen_local" and not self._wait_for_local_model():
-                raise RuntimeError("Local Qwen model did not become ready before timeout")
+            if self._is_local_model(model_type) and not self._wait_for_local_model():
+                raise RuntimeError("Local OpenAI-compatible model did not become ready before timeout")
             
             # Извлекаем профиль сотрудника
             employee_data = req_data.get("employee", {})
@@ -478,9 +492,12 @@ class AgentManager:
                 raise ValueError("employee fio, position and department are required")
             learning_history = employee_data.get("learning_history", [])
             
-            # Псевдонимизация ФИО для внешних облачных провайдеров
-            safe_fio = real_fio if model_type == "qwen_local" else self._pseudonymize_fio(real_fio)
-            is_external_model = model_type != "qwen_local"
+            # Встроенный managed runtime остаётся внутри Docker-сети. Внешний
+            # OpenAI-compatible endpoint получает ту же псевдонимизацию, что и
+            # облачные провайдеры, даже если он называется «локальным».
+            trusted_managed_local = self._is_local_model(model_type) and local_llm_mode() == "managed"
+            safe_fio = real_fio if trusted_managed_local else self._pseudonymize_fio(real_fio)
+            is_external_model = not trusted_managed_local
             model_position = self._mask_external_text(position, real_fio, safe_fio) if is_external_model else position
             model_department = self._mask_external_text(department, real_fio, safe_fio) if is_external_model else department
             model_career_goal = self._mask_external_text(career_goal, real_fio, safe_fio) if is_external_model else career_goal

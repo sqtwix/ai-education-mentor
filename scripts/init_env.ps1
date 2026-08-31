@@ -32,6 +32,28 @@ if (Test-Path $envFile) {
         [System.IO.File]::AppendAllText($envFile, [Environment]::NewLine)
     }
 
+    $legacyMappings = [ordered]@{
+        ENABLE_LOCAL_QWEN = 'ENABLE_LOCAL_LLM'
+        QWEN_MODEL_FILE = 'LOCAL_LLM_MODEL_FILE'
+        QWEN_MODEL_URL = 'LOCAL_LLM_MODEL_URL'
+        QWEN_MODEL_SHA256 = 'LOCAL_LLM_MODEL_SHA256'
+        QWEN_LOCAL_MODEL = 'LOCAL_LLM_MODEL'
+        QWEN_CONTEXT_SIZE = 'LOCAL_LLM_CONTEXT_SIZE'
+        QWEN_THREADS = 'LOCAL_LLM_THREADS'
+        QWEN_BATCH_SIZE = 'LOCAL_LLM_BATCH_SIZE'
+        QWEN_PARALLEL = 'LOCAL_LLM_PARALLEL'
+    }
+    foreach ($legacyKey in $legacyMappings.Keys) {
+        $canonicalKey = $legacyMappings[$legacyKey]
+        if ($existingKeys.ContainsKey($legacyKey) -and -not $existingKeys.ContainsKey($canonicalKey)) {
+            $legacyLine = ($content -split "`r?`n" | Where-Object { $_ -match "^$legacyKey=" } | Select-Object -First 1)
+            $legacyValue = $legacyLine.Substring($legacyKey.Length + 1)
+            [System.IO.File]::AppendAllText($envFile, "$canonicalKey=$legacyValue" + [Environment]::NewLine)
+            $existingKeys[$canonicalKey] = $true
+            Write-Host "--> Migrated $legacyKey to $canonicalKey."
+        }
+    }
+
     foreach ($line in [System.IO.File]::ReadAllLines($templateFile)) {
         if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=') {
             $key = $Matches[1]

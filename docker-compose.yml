@@ -114,10 +114,14 @@ services:
       - SBERGPT_API_KEY=${SBERGPT_API_KEY:-}
       - SBERGPT_BASE_URL=${SBERGPT_BASE_URL:-https://gigachat.devices.sberbank.ru/api/v1/}
       - SBERGPT_MODEL=${SBERGPT_MODEL:-GigaChat-Pro}
-      # Локальная Qwen модель (llama.cpp)
-      - QWEN_LOCAL_URL=http://qwen-local:8080/v1
-      - QWEN_LOCAL_MODEL=${QWEN_LOCAL_MODEL:-local-model}
-      - QWEN_MODEL_FILE=${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}
+      # Универсальная локальная/OpenAI-compatible модель
+      - ENABLE_LOCAL_LLM=${ENABLE_LOCAL_LLM:-false}
+      - LOCAL_LLM_MODE=${LOCAL_LLM_MODE:-managed}
+      - LOCAL_LLM_BASE_URL=${LOCAL_LLM_BASE_URL:-http://local-llm:8080/v1}
+      - LOCAL_LLM_API_KEY=${LOCAL_LLM_API_KEY:-}
+      - LOCAL_LLM_MODEL=${LOCAL_LLM_MODEL:-local-model}
+      - LOCAL_LLM_MODEL_FILE=${LOCAL_LLM_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf}
+      - LOCAL_LLM_DISABLE_THINKING=${LOCAL_LLM_DISABLE_THINKING:-}
       - AI_MODEL_READINESS_TIMEOUT_SECONDS=${AI_MODEL_READINESS_TIMEOUT_SECONDS:-180}
       - AI_MODEL_READINESS_POLL_SECONDS=${AI_MODEL_READINESS_POLL_SECONDS:-2}
       - AI_CATALOG_CANDIDATE_LIMIT=${AI_CATALOG_CANDIDATE_LIMIT:-10}
@@ -131,6 +135,8 @@ services:
       start_period: 5s
     networks:
       - saas-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -143,8 +149,8 @@ services:
         max-file: "5"
     restart: unless-stopped
 
-  # Сервис с локальной моделью через llama.cpp
-  qwen-local:
+  # Управляемый сервис для любой совместимой GGUF-модели через llama.cpp
+  local-llm:
     profiles: ["local-ai"]
     # Immutable server build: a floating `server` tag can silently change
     # inference behaviour between production deployments.
@@ -152,16 +158,18 @@ services:
     volumes:
       - ./models:/models:ro
     command: >
-      -m /models/${QWEN_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf} --host 0.0.0.0 --port 8080
-      -c ${QWEN_CONTEXT_SIZE:-4096} --threads ${QWEN_THREADS:-4} -b ${QWEN_BATCH_SIZE:-512}
-      -np ${QWEN_PARALLEL:-1} --cache-ram 0 --no-cache-prompt --no-cache-idle-slots
-      --metrics --alias ${QWEN_LOCAL_MODEL:-local-model}
+      -m /models/${LOCAL_LLM_MODEL_FILE:-Qwen3-1.7B-Q4_K_M.gguf} --host 0.0.0.0 --port 8080
+      -c ${LOCAL_LLM_CONTEXT_SIZE:-4096} --threads ${LOCAL_LLM_THREADS:-4} -b ${LOCAL_LLM_BATCH_SIZE:-512}
+      -np ${LOCAL_LLM_PARALLEL:-1} --cache-ram 0 --no-cache-prompt --no-cache-idle-slots
+      --metrics --alias ${LOCAL_LLM_MODEL:-local-model}
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # Разные GGUF могут загружаться заметно дольше эталонной модели.
+      # Общий deploy timeout всё равно ограничивает ожидание пятью минутами.
+      start_period: 240s
     networks:
       - saas-network
     security_opt:

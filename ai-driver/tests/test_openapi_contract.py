@@ -7,7 +7,7 @@ class OpenApiContractTests(unittest.TestCase):
     def test_provider_routes_publish_trajectory_request_body(self):
         document = app.openapi()
 
-        for provider in ("deepseek", "sbergpt", "qwen_local"):
+        for provider in ("deepseek", "sbergpt", "local_llm", "qwen_local"):
             operation = document["paths"][f"/agents/get_{provider}_data_analysis"]["post"]
             schema = operation["requestBody"]["content"]["application/json"]["schema"]
             self.assertEqual(schema["$ref"], "#/components/schemas/TrajectoryRequest")

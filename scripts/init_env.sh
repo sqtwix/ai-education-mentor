@@ -44,6 +44,29 @@ if [ -f "$ENV_FILE" ]; then
         printf '\n' >> "$ENV_FILE"
     fi
 
+    # Migrate the previous Qwen-specific names once, preserving installation
+    # values. The legacy keys remain readable by older releases and are not
+    # deleted automatically.
+    migrate_legacy_key() {
+        local legacy_key="$1"
+        local canonical_key="$2"
+        if grep -q "^${legacy_key}=" "$ENV_FILE" && ! grep -q "^${canonical_key}=" "$ENV_FILE"; then
+            local legacy_value
+            legacy_value="$(sed -n "s/^${legacy_key}=//p" "$ENV_FILE" | head -n 1)"
+            printf '%s=%s\n' "$canonical_key" "$legacy_value" >> "$ENV_FILE"
+            echo "--> Migrated ${legacy_key} to ${canonical_key}."
+        fi
+    }
+    migrate_legacy_key ENABLE_LOCAL_QWEN ENABLE_LOCAL_LLM
+    migrate_legacy_key QWEN_MODEL_FILE LOCAL_LLM_MODEL_FILE
+    migrate_legacy_key QWEN_MODEL_URL LOCAL_LLM_MODEL_URL
+    migrate_legacy_key QWEN_MODEL_SHA256 LOCAL_LLM_MODEL_SHA256
+    migrate_legacy_key QWEN_LOCAL_MODEL LOCAL_LLM_MODEL
+    migrate_legacy_key QWEN_CONTEXT_SIZE LOCAL_LLM_CONTEXT_SIZE
+    migrate_legacy_key QWEN_THREADS LOCAL_LLM_THREADS
+    migrate_legacy_key QWEN_BATCH_SIZE LOCAL_LLM_BATCH_SIZE
+    migrate_legacy_key QWEN_PARALLEL LOCAL_LLM_PARALLEL
+
     while IFS= read -r template_line || [ -n "$template_line" ]; do
         template_line="${template_line%$'\r'}"
         [[ "$template_line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue

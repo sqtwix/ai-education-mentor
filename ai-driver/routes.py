@@ -23,13 +23,23 @@ def setup_routes(agent_controller):
         description="Возвращает индивидуальную образовательную траекторию, сформированную группой агентов Sber GigaChat"
     )
 
-    # Анализ и генерация траектории через локальную модель Qwen (llama.cpp)
+    # Канонический маршрут для managed GGUF и внешних OpenAI-compatible моделей.
+    router.add_api_route(
+        path="/get_local_llm_data_analysis",
+        endpoint=agent_controller.get_local_llm_data_analysis,
+        methods=["POST"],
+        summary="Сформировать ИОТ с использованием локальной OpenAI-compatible модели",
+        description="Поддерживает управляемую GGUF-модель через llama.cpp и внешний совместимый endpoint"
+    )
+
+    # Совместимость с ранее выпущенным API.
     router.add_api_route(
         path="/get_qwen_local_data_analysis",
         endpoint=agent_controller.get_qwen_local_data_analysis,
         methods=["POST"],
-        summary="Сформировать ИОТ с использованием локальной модели Qwen (llama.cpp)",
-        description="Возвращает индивидуальную образовательную траекторию, сформированную локальной моделью Qwen"
+        summary="Устаревший alias локальной модели",
+        description="Совместимый маршрут; новые клиенты используют get_local_llm_data_analysis",
+        deprecated=True,
     )
 
     # Получить актуальный каталог программ 2025 года (ППК и ЭК)

@@ -7,7 +7,7 @@
 - `frontend`: React 19, Vite 8, nginx, Recharts, ExcelJS, jsPDF.
 - `api-core`: ASP.NET Core 9, EF Core, PostgreSQL, JWT, стойкая очередь.
 - `ai-driver`: Python 3.13, FastAPI, Pydantic, OpenAI-compatible clients.
-- `qwen-local`: опциональный Docker profile `local-ai`, llama.cpp server и Qwen3-1.7B Q4_K_M.
+- `local-llm`: опциональный Docker profile `local-ai`, llama.cpp server и совместимая GGUF-модель.
 
 ```mermaid
 sequenceDiagram
@@ -64,7 +64,7 @@ scripts/                  runtime, ACL, load, backup/restore smoke
 docker compose ps
 ```
 
-Он запускает frontend, API Core, PostgreSQL и AI Driver. Чтобы добавить локальную Qwen, установите в `.env` `ENABLE_LOCAL_QWEN=true` и повторите `./deploy.sh`. Для ручного Compose-запуска используйте `docker compose --profile local-ai up -d`.
+Он запускает frontend, API Core, PostgreSQL и AI Driver. Локальный провайдер включается через `ENABLE_LOCAL_LLM=true`: `managed` запускает profile `local-ai`, `external` использует готовый OpenAI-compatible endpoint без пятого контейнера.
 
 Единственная рекомендуемая production-точка входа — `deploy.sh` / `deploy.bat`: они создают конфигурацию, валидируют Compose и дожидаются healthchecks. Прямой `docker compose up` предназначен для разработки/диагностики и требует уже готовый `.env`.
 
@@ -131,7 +131,7 @@ uvicorn main:app --host 127.0.0.1 --port 8000 --reload
 - `GET /api/v1/operations/metrics` — только `Admin`;
 - `GET/PUT /api/v1/user/settings`, `GET /api/v1/user/me`.
 
-AI Driver endpoints находятся под `/agents`: отдельные вызовы DeepSeek, GigaChat и Qwen, а также `catalog`, `benchmarks` и `progress/{request_id}`. Они являются внутренним контрактом API Core, а не браузерным API.
+AI Driver endpoints находятся под `/agents`: отдельные вызовы DeepSeek, GigaChat и `local_llm`, а также `catalog`, `benchmarks` и `progress/{request_id}`. Старый маршрут Qwen сохранён как deprecated alias. Эти endpoints являются внутренним контрактом API Core, а не браузерным API.
 
 Перед созданием задачи API Core проверяет `/models/availability`. Если провайдер не готов, возвращается `503` с кодом `MODEL_UNAVAILABLE`; задача не записывается в очередь. Отсутствие всех моделей не влияет на readiness API, пока доступны PostgreSQL и AI Driver.
 
@@ -160,9 +160,9 @@ AI Driver endpoints находятся под `/agents`: отдельные вы
 4. Фиктивные уровни компетенций, проценты коллег, сроки и приоритеты запрещены.
 5. Точная когорта — `должность + ИОГВ`; fallback по должности обязан сообщить limitation.
 6. Когортное ранжирование отключено при пустом `MIN_COHORT_SIZE`.
-7. Перед внешним LLM ФИО псевдонимизируется, остальные PII маскируются парсером.
+7. Перед облачным LLM и external local endpoint ФИО псевдонимизируется, остальные PII маскируются парсером; только managed llama.cpp считается внутренним доверенным runtime.
 8. Ошибка LLM не должна выдавать fallback за полноценный AI-результат.
-9. Пакет содержит не более 15 профилей; Qwen production profile использует `QWEN_PARALLEL=1`.
+9. Пакет содержит не более 15 профилей; эталонный Qwen profile использует `LOCAL_LLM_PARALLEL=1`.
 
 При изменении prompt/schema одновременно обновляйте Pydantic и C# DTO, contract tests, нормализатор frontend и документацию. Валидируйте реальный ответ модели, а не только fixture.
 

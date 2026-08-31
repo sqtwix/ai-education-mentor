@@ -171,7 +171,7 @@ builder.Services.AddOpenApi(options =>
             {
                 Type = "string",
                 Default = new OpenApiString("deepseek"),
-                Description = "Модель ИИ (deepseek, gigachat или qwen_local)"
+                Description = "Модель ИИ (deepseek, gigachat или local_llm)"
             });
 
             formSchema.Properties.Add("requestId", new OpenApiSchema

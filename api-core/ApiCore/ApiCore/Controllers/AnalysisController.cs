@@ -61,7 +61,7 @@ public class AnalysisController : ControllerBase
         }
         if (!TryNormalizeModelType(request.ModelType, out var modelType))
         {
-            return BadRequest(new { error = "Неизвестная модель. Допустимые значения: deepseek, sbergpt, qwen_local." });
+            return BadRequest(new { error = "Неизвестная модель. Допустимые значения: deepseek, sbergpt, local_llm." });
         }
         var taskId = string.IsNullOrWhiteSpace(request.RequestId) ? Guid.NewGuid().ToString() : request.RequestId;
         if (taskId.Length > 128 || taskId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_'))
@@ -73,7 +73,8 @@ public class AnalysisController : ControllerBase
         if (existingReport != null)
         {
             if (existingReport.UserId != userId
-                || existingReport.ModelType != modelType
+                || !TryNormalizeModelType(existingReport.ModelType, out var existingModelType)
+                || existingModelType != modelType
                 || !JsonPayloadEquals(existingReport.PayloadJson, payloadJson))
             {
                 return Conflict(new { error = "Идентификатор запроса уже используется для другого задания." });
@@ -146,7 +147,7 @@ public class AnalysisController : ControllerBase
         }
         if (!TryNormalizeModelType(modelType, out var normalizedModelType))
         {
-            return BadRequest(new { error = "Неизвестная модель. Допустимые значения: deepseek, sbergpt, qwen_local." });
+            return BadRequest(new { error = "Неизвестная модель. Допустимые значения: deepseek, sbergpt, local_llm." });
         }
         var taskId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString() : requestId;
         if (taskId.Length > 128 || taskId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_'))
@@ -156,7 +157,9 @@ public class AnalysisController : ControllerBase
         var existingReport = await _context.AnalysisReports.FirstOrDefaultAsync(report => report.Id == taskId);
         if (existingReport != null)
         {
-            if (existingReport.UserId != userId || existingReport.ModelType != normalizedModelType)
+            if (existingReport.UserId != userId
+                || !TryNormalizeModelType(existingReport.ModelType, out var existingModelType)
+                || existingModelType != normalizedModelType)
             {
                 return Conflict(new { error = "Идентификатор запроса уже используется для другого задания." });
             }
@@ -570,7 +573,7 @@ public class AnalysisController : ControllerBase
         {
             "deepseek" => "deepseek",
             "sbergpt" or "gigachat" => "sbergpt",
-            "qwen_local" => "qwen_local",
+            "local_llm" or "local" or "qwen_local" => "local_llm",
             _ => string.Empty
         };
         return normalized.Length > 0;

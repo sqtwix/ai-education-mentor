@@ -10,9 +10,9 @@
 | `api-core` | ASP.NET Core 9, auth, очередь, данные | `127.0.0.1:${API_HOST_PORT:-5050}` |
 | `ai-driver` | FastAPI, LLM-конвейер | `127.0.0.1:${AI_DRIVER_HOST_PORT:-8000}` |
 | `postgres` | PostgreSQL 15 | только Docker network |
-| `qwen-local` | опциональный profile `local-ai`: llama.cpp и GGUF | только Docker network |
+| `local-llm` | опциональный managed profile `local-ai`: llama.cpp и GGUF | только Docker network |
 
-Минимум: 4 CPU, 8 ГБ RAM, 15 ГБ SSD. Для локальной Qwen: 8 CPU, 16 ГБ RAM и 20 ГБ SSD. Нужны Docker Engine 24+ и Compose v2 либо standalone `docker-compose`.
+Минимум: 4 CPU, 8 ГБ RAM, 15 ГБ SSD. Для встроенной GGUF-модели: ориентировочно 8 CPU, 16 ГБ RAM и 20 ГБ SSD; точные требования зависят от файла. Нужны Docker Engine 24+ и Compose v2 либо standalone `docker-compose`.
 
 `docker-compose.yml` не завершает внешний production-периметр: перед публикацией установите TLS reverse proxy/WAF, доменное имя, сетевой ACL и резервное копирование по регламенту организации.
 
@@ -40,7 +40,7 @@ Deploy выполняет следующие действия:
 1. создаёт или безопасно дополняет `.env`;
 2. генерирует `DB_PASSWORD` и `JWT_SECRET`;
 3. проверяет, что секреты не шаблонные и JWT не короче 32 символов;
-4. при `ENABLE_LOCAL_QWEN=true` загружает GGUF и обязательно сверяет SHA-256; при `false` пропускает модель;
+4. при `ENABLE_LOCAL_LLM=true` проверяет managed GGUF или внешний OpenAI-compatible endpoint; при `false` пропускает модель;
 5. собирает образы;
 6. подготавливает ownership volume Data Protection keys;
 7. запускает стек и возвращает успех только после `healthy` всех включённых сервисов.
@@ -86,25 +86,38 @@ AI_DRIVER_HOST_PORT=8000
 
 ### Режим без нейросети
 
-Это штатный режим по умолчанию и не требует добавлять переменную вручную. Если `ENABLE_LOCAL_QWEN` отсутствует, deploy трактует её как `false`; новый `.env` уже получает это значение из шаблона. Запускаются `frontend`, `api-core`, `postgres` и `ai-driver`; deploy также останавливает и удаляет контейнер `qwen-local`, если он остался от предыдущего запуска. GGUF-файл при этом не удаляется. Доступны регистрация, вход, каталог, аналитика, история, архив и настройки. Создание новой ИОТ отключено, а прямой запрос получает `503` с кодом `MODEL_UNAVAILABLE` без постановки задачи в очередь. `/health/ready` остаётся успешным, если PostgreSQL и AI Driver исправны.
+Это штатный режим по умолчанию и не требует добавлять переменную вручную. Если `ENABLE_LOCAL_LLM` отсутствует, deploy трактует её как `false`. Запускаются `frontend`, `api-core`, `postgres` и `ai-driver`; managed-контейнер останавливается, но GGUF не удаляется. Доступны регистрация, вход, каталог, аналитика, история, архив и настройки. Создание новой ИОТ возвращает `503 MODEL_UNAVAILABLE` без постановки задачи в очередь.
 
-### Локальная модель
+### Управляемая GGUF-модель
 
 ```ini
-ENABLE_LOCAL_QWEN=true
-QWEN_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf
-QWEN_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
-QWEN_MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5
-QWEN_LOCAL_MODEL=local-model
-QWEN_CONTEXT_SIZE=4096
-QWEN_THREADS=4
-QWEN_BATCH_SIZE=512
-QWEN_PARALLEL=1
+ENABLE_LOCAL_LLM=true
+LOCAL_LLM_MODE=managed
+LOCAL_LLM_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf
+LOCAL_LLM_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
+LOCAL_LLM_MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5
+LOCAL_LLM_MODEL=local-model
+LOCAL_LLM_CONTEXT_SIZE=4096
+LOCAL_LLM_THREADS=4
+LOCAL_LLM_BATCH_SIZE=512
+LOCAL_LLM_PARALLEL=1
 ```
 
-Checksum обязателен только при `ENABLE_LOCAL_QWEN=true` и должен содержать ровно 64 hex-символа. Новый файл скачивается через HTTPS во временный `.part`, проверяется и только затем переименовывается. Для air-gapped установки заранее скопируйте проверенный файл в `models/`; автоматическая загрузка тогда не нужна. `QWEN_MODEL_FILE` должен содержать только имя файла, без пути.
+Поддерживаются модели `.gguf`, совместимые с закреплённым llama.cpp и chat completions. Имя файла не может содержать путь; SHA-256 обязателен. Новый файл скачивается только по HTTPS во временный `.part`, проверяется и затем атомарно переименовывается. Для air-gapped установки заранее скопируйте файл в `models/`.
 
-Не увеличивайте `QWEN_PARALLEL` без отдельного нагрузочного теста. Текущий профиль `1` выбран для устойчивой пакетной обработки. Контекст `4096`, отключённый prompt cache и `--cache-ram 0` являются частью проверенного профиля.
+Для эталонной Qwen не увеличивайте `LOCAL_LLM_PARALLEL` без нагрузочного теста. Для другой GGUF отдельно подтвердите RAM, context, chat template, JSON-ответы и качество. `LOCAL_LLM_DISABLE_THINKING` можно задать явно; при пустом значении `/no_think` автоматически применяется только к моделям с Qwen в имени.
+
+### Внешний OpenAI-compatible endpoint
+
+```ini
+ENABLE_LOCAL_LLM=true
+LOCAL_LLM_MODE=external
+LOCAL_LLM_BASE_URL=http://host.docker.internal:1234/v1
+LOCAL_LLM_MODEL=my-chat-model
+LOCAL_LLM_API_KEY=
+```
+
+Endpoint должен публиковать `GET /v1/models` и `POST /v1/chat/completions`. Собственный контейнер модели не запускается. Deploy выполняет минимальный chat inference и останавливается, если контракт несовместим. Для адреса на хосте Docker используйте `host.docker.internal`, а не `localhost`. В external-режиме профиль сотрудника псевдонимизируется как для облачного провайдера.
 
 ### Облачные провайдеры
 
@@ -144,10 +157,10 @@ curl -fsS http://127.0.0.1:8000/health
 curl -fsS http://127.0.0.1:8000/models/availability
 ```
 
-Проверка Qwen выполняется только при `ENABLE_LOCAL_QWEN=true`:
+Проверка managed-модели выполняется только при `ENABLE_LOCAL_LLM=true` и `LOCAL_LLM_MODE=managed`:
 
 ```bash
-docker compose --profile local-ai exec -T qwen-local \
+docker compose --profile local-ai exec -T local-llm \
   curl -fsS http://127.0.0.1:8080/health
 ```
 
@@ -155,7 +168,7 @@ docker compose --profile local-ai exec -T qwen-local \
 
 - `/health` проверяет сам API Core.
 - `/health/ready` проверяет готовность его зависимостей.
-- `/models/availability` не раскрывает ключи: для Qwen он проверяет readiness, для облачных моделей — наличие ключа.
+- `/models/availability` не раскрывает ключи: для локального endpoint он проверяет стандартный `/models`, для облачных моделей — наличие ключа.
 - Swagger доступен только на loopback: `http://127.0.0.1:5050/swagger`.
 
 Сначала проверьте сценарий без модели: регистрация → вход → каталог → аналитика → настройки → история; конструктор должен показать отсутствие провайдеров и заблокировать генерацию. Если включён провайдер, отдельно проверьте: создание одного профиля → завершение → открытие отчёта → PDF/XLSX/JSON → архив → восстановление.
@@ -173,12 +186,12 @@ docker compose logs --tail=200 ai-driver
 Логи локальной модели существуют только в профиле `local-ai`:
 
 ```bash
-docker compose --profile local-ai logs --tail=200 qwen-local
+docker compose --profile local-ai logs --tail=200 local-llm
 ```
 
 Следите за restart count, `unhealthy`, заполнением диска, временем очереди, повторными попытками и числом `CompletedWithLimitations`/`Failed`. Docker-логи ограничены пятью файлами по 10 МБ на сервис.
 
-При обновлении старой установки добавлять `ENABLE_LOCAL_QWEN=false` вручную не требуется: отсутствие переменной трактуется как `false`. `./deploy.sh` запустит базовые четыре сервиса и остановит ранее созданный контейнер `qwen-local`, не удаляя файл GGUF. Для повторного включения модели достаточно задать `ENABLE_LOCAL_QWEN=true` и снова выполнить deploy.
+При обновлении старой установки `ENABLE_LOCAL_QWEN` и `QWEN_*` автоматически копируются в новые `ENABLE_LOCAL_LLM` и `LOCAL_LLM_*`. Старые строки сохраняются для возможности отката, но новые значения становятся каноническими.
 
 Административные метрики очереди требуют JWT пользователя с ролью `Admin`:
 
@@ -233,11 +246,11 @@ docker compose restart
 
 ## 8. Диагностика
 
-### Qwen не становится healthy
+### Managed-модель не становится healthy
 
 ```bash
 sha256sum models/Qwen3-1.7B-Q4_K_M.gguf
-docker compose --profile local-ai logs --tail=300 qwen-local
+docker compose --profile local-ai logs --tail=300 local-llm
 ```
 
 Сверьте имя, checksum, свободную RAM/диск и параметры 4096/4/512/1. Не заменяйте модель файлом с тем же именем без обновления утверждённого hash и повторной приёмки.
@@ -266,7 +279,8 @@ Deploy намеренно останавливается до изменения
 
 - [ ] Установлены уникальные DB/JWT secrets, `.env` защищён.
 - [ ] Выбран и задокументирован режим: без AI, облачный провайдер или `local-ai`.
-- [ ] При `ENABLE_LOCAL_QWEN=true` GGUF checksum совпадает, образ llama.cpp закреплён digest.
+- [ ] При managed-режиме GGUF checksum совпадает, образ llama.cpp закреплён digest и inference probe прошёл.
+- [ ] При external-режиме задокументированы владелец endpoint, модель, доступ и политика передачи данных.
 - [ ] Внешние порты ограничены firewall; настроен TLS.
 - [ ] Неиспользуемые облачные ключи пусты.
 - [ ] Владелец данных документировал решение по `MIN_COHORT_SIZE`.

@@ -27,7 +27,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 class AgentClient:
-    def __init__(self, api_key: str, base_url: str, agent_model: str, specialization: str):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        agent_model: str,
+        specialization: str,
+        local_runtime: bool | None = None,
+        disable_thinking: bool | None = None,
+    ):
         # Проверяем обязательные параметры перед инициализацией
         if not base_url or not agent_model:
             raise Exception("AgentClient Initialization Exception: base_url and agent_model are required")
@@ -36,12 +44,17 @@ class AgentClient:
             self.base_url = base_url
             self.model = agent_model
             self.specialization = specialization
-            self.is_local_qwen = api_key == "not-needed" or "qwen-local" in base_url
+            inferred_local = api_key == "not-needed" or "qwen-local" in base_url or "local-llm" in base_url
+            self.is_local_runtime = inferred_local if local_runtime is None else local_runtime
+            inferred_qwen = self.is_local_runtime and (
+                "qwen" in agent_model.lower() or "qwen" in base_url.lower()
+            )
+            self.disable_thinking = inferred_qwen if disable_thinking is None else disable_thinking
             # OpenAI клиент работает для всех совместимых API (DeepSeek, GigaChat, vLLM/llama.cpp)
             self.client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
-                max_retries=0 if self.is_local_qwen else 2,
+                max_retries=0 if self.is_local_runtime else 2,
             )
         except Exception as e:
             raise Exception("AgentClient Initialization Exception: agent initialization failed - " + str(e))
@@ -66,7 +79,7 @@ class AgentClient:
                 "trajectory-justifier": 700,
             }
             effective_system_prompt = system_prompt
-            if self.is_local_qwen:
+            if self.disable_thinking:
                 # Qwen3 по умолчанию может расходовать весь небольшой output budget
                 # на рассуждение. Для строгого JSON-конвейера нужен non-thinking mode.
                 effective_system_prompt = f"{system_prompt}\n/no_think"

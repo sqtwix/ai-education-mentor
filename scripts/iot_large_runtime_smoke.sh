@@ -77,7 +77,7 @@ jq -n \
 upload_body="$(curl -fsS -X POST "$API_URL/analysis/upload" \
   -H "Authorization: Bearer $token" \
   -F "userResponseFiles=@$fixture;type=application/json" \
-  -F 'modelType=qwen_local' \
+  -F 'modelType=local_llm' \
   -F "requestId=$request_id")"
 jq -e --arg request_id "$request_id" '.task_id == $request_id' <<<"$upload_body" >/dev/null
 

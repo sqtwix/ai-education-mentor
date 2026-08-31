@@ -7,7 +7,7 @@
 
 1. **Зарубежные модели**: точная модель DeepSeek из `DEEPSEEK_MODEL`.
 2. **Отечественные модели**: точная модель Sber GigaChat из `SBERGPT_MODEL`.
-3. **Локальные модели**: точный GGUF-файл из `QWEN_MODEL_FILE` через `llama.cpp`.
+3. **Локальные модели**: точный GGUF-файл из `LOCAL_LLM_MODEL_FILE` через `llama.cpp` или зафиксированные `LOCAL_LLM_BASE_URL` + `LOCAL_LLM_MODEL` для external-режима.
 
 ## Обязательный тестовый набор
 
@@ -37,7 +37,7 @@
 
 Заполняется только после воспроизводимого прогона.
 
-| Метрика | DeepSeek (`DEEPSEEK_MODEL`) | Sber (`SBERGPT_MODEL`) | Local (`QWEN_MODEL_FILE`) |
+| Метрика | DeepSeek (`DEEPSEEK_MODEL`) | Sber (`SBERGPT_MODEL`) | Local (`LOCAL_LLM_MODEL_FILE` / `LOCAL_LLM_MODEL`) |
 |---|---:|---:|---:|
 | 0-repeat rate | TBD | TBD | TBD |
 | Catalog validity | TBD | TBD | TBD |
@@ -53,7 +53,7 @@
 
 - заполнены все `TBD` значения;
 - рядом с результатами указаны дата прогона, версии моделей, temperature и commit;
-- для Qwen указан точный файл модели и `QWEN_MODEL_SHA256`;
+- для managed-модели указаны точный файл и `LOCAL_LLM_MODEL_SHA256`, для external — endpoint, model id и владелец runtime;
 - приложен список ограничений тестового набора.
 
 До этого корректная формулировка: "архитектура поддерживает три группы моделей, но финальное качество требует приемочного сравнения на экспертно размеченном наборе".

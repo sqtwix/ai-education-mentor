@@ -641,21 +641,21 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
 
             <button
               type="button"
-              className={`model-choice-card ${selectedModel === "qwen_local" ? "selected" : ""}`}
-              aria-pressed={selectedModel === "qwen_local"}
-              onClick={() => setSelectedModel("qwen_local")}
-              disabled={!modelInfo("qwen_local")?.configured}
+              className={`model-choice-card ${selectedModel === "local_llm" ? "selected" : ""}`}
+              aria-pressed={selectedModel === "local_llm"}
+              onClick={() => setSelectedModel("local_llm")}
+              disabled={!modelInfo("local_llm")?.configured}
             >
               <div className="model-card-top">
                 <span className="model-card-name">
-                  <Cpu size={17} style={{ color: "var(--accent-3)" }} /> Qwen Local (GGUF)
+                  <Cpu size={17} style={{ color: "var(--accent-3)" }} /> Локальная модель
                 </span>
                 <span className="model-kind">Локальная</span>
               </div>
               <span className="model-card-desc">
-                {modelInfo("qwen_local")?.configured
-                  ? `Локальный сервис готов: ${modelInfo("qwen_local").model}.`
-                  : "Локальная модель выключена или недоступна."}
+                {modelInfo("local_llm")?.configured
+                  ? `Готова модель: ${modelInfo("local_llm").model} (${modelInfo("local_llm").mode === "external" ? "внешний endpoint" : "GGUF"}).`
+                  : "Локальная модель выключена или OpenAI-compatible endpoint недоступен."}
               </span>
             </button>
           </div>

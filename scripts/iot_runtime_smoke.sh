@@ -38,7 +38,7 @@ payload="$(jq -cn \
   --arg course "$course_name" \
   '{
     request_id: $request_id,
-    model_type: "qwen_local",
+    model_type: "local_llm",
     employee: {
       fio: "Тестовый профиль runtime",
       position: "Главный специалист",
