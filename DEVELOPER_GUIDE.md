@@ -66,6 +66,10 @@ docker compose ps
 
 Он запускает frontend, API Core, PostgreSQL и AI Driver. Локальный провайдер включается через `ENABLE_LOCAL_LLM=true`: `managed` запускает profile `local-ai`, `external` использует готовый OpenAI-compatible endpoint без пятого контейнера.
 
+Канонический идентификатор провайдера во frontend, API Core, новых записях БД и AI Driver — `local_llm`. Значения `qwen_local` и старый AI Driver route принимаются только для обратной совместимости и нормализуются в `local_llm`; новый код не должен сохранять старый идентификатор.
+
+В managed-режиме runtime получает `LOCAL_LLM_MODEL_FILE`, а запросы используют alias `LOCAL_LLM_MODEL`. В external-режиме файл и checksum не участвуют: клиент использует `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL` и необязательный `LOCAL_LLM_API_KEY`. Оба режима обязаны пройти стандартные `/models` и `/chat/completions`; provider-specific ветвления нельзя добавлять без теста и документированного контракта.
+
 Единственная рекомендуемая production-точка входа — `deploy.sh` / `deploy.bat`: они создают конфигурацию, валидируют Compose и дожидаются healthchecks. Прямой `docker compose up` предназначен для разработки/диагностики и требует уже готовый `.env`.
 
 ### Frontend отдельно
@@ -198,7 +202,7 @@ cd ai-driver
 python -m unittest discover -s tests -v
 ```
 
-Тесты покрывают клиент модели, grounding/валидацию менеджера и OpenAPI-контракт.
+Тесты покрывают клиент модели, managed/external availability и inference probe, отсутствие утечки API key, grounding/валидацию менеджера, псевдонимизацию external endpoint и OpenAPI-контракт.
 
 ### API Core
 

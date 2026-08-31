@@ -4,7 +4,7 @@ Production-oriented платформа Корпоративного универ
 
 ## Быстрый запуск
 
-Требования: Docker Engine 24+ и Docker Compose v2 (поддерживается также standalone `docker-compose`). Базовый режим без нейросети требует 4–8 ГБ RAM; для опциональной локальной Qwen рекомендуется 16 ГБ RAM и 20 ГБ свободного места.
+Требования: Docker Engine 24+ и Docker Compose v2 (поддерживается также standalone `docker-compose`). Базовый режим без нейросети требует 4–8 ГБ RAM. Для managed GGUF ориентир эталонного профиля — 16 ГБ RAM и 20 ГБ свободного места; фактические требования зависят от модели и размера контекста.
 
 ### Linux / macOS
 
@@ -52,7 +52,7 @@ curl -fsS http://127.0.0.1:8000/health
 - Регистрация и вход, восстановление сессии, разграничение данных пользователей.
 - Создание одного профиля вручную или загрузка `.json`, `.xlsx`, `.xls`, `.csv`, `.zip`.
 - Пакетная генерация до 15 траекторий с checkpoint после каждого профиля.
-- Выбор только реально доступного провайдера: локальная Qwen, DeepSeek или GigaChat; при отсутствии всех моделей остальные функции платформы продолжают работать.
+- Выбор только реально доступного провайдера: локальная/OpenAI-compatible модель, DeepSeek или GigaChat; при отсутствии всех моделей остальные функции платформы продолжают работать.
 - Исключение уже пройденных программ и проверка каждой рекомендации по каталогу.
 - Каталог 159 программ, поиск и фильтры.
 - Аналитика по 1 314 записям обучения, 36 должностям и 60 ИОГВ.
@@ -94,6 +94,7 @@ LOCAL_LLM_MODE=managed
 LOCAL_LLM_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf
 LOCAL_LLM_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
 LOCAL_LLM_MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5
+LOCAL_LLM_MODEL=local-model
 ```
 
 Можно заменить файл и URL на другую совместимую `.gguf`, но checksum всегда обязателен. Если файл уже находится в `models/`, загрузка пропускается. Проверенный эталонный профиль:
@@ -104,7 +105,25 @@ LOCAL_LLM_MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940
 - prompt/cache RAM отключены для стабильной пакетной обработки;
 - образ llama.cpp закреплён immutable digest в `docker-compose.yml`.
 
-Для уже работающего Ollama, LM Studio, llama.cpp или другого OpenAI-compatible сервера используйте `LOCAL_LLM_MODE=external`, `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL` и при необходимости `LOCAL_LLM_API_KEY`. В Docker Desktop адрес сервера на хосте обычно начинается с `http://host.docker.internal:.../v1`. Внешнему endpoint ФИО и другие чувствительные поля передаются только после псевдонимизации.
+Для уже работающего Ollama, LM Studio, llama.cpp или другого OpenAI-compatible сервера укажите:
+
+```env
+ENABLE_LOCAL_LLM=true
+LOCAL_LLM_MODE=external
+LOCAL_LLM_BASE_URL=http://host.docker.internal:1234/v1
+LOCAL_LLM_MODEL=my-chat-model
+LOCAL_LLM_API_KEY=
+```
+
+Endpoint обязан поддерживать `GET /v1/models` и `POST /v1/chat/completions`. В Docker Desktop адрес сервера на хосте обычно начинается с `http://host.docker.internal:.../v1`; `localhost` внутри AI Driver указывает на сам контейнер и намеренно отклоняется deploy-скриптом. Внешнему endpoint профиль передаётся после псевдонимизации и маскирования PII.
+
+| Режим | Что запускается | Обязательная настройка |
+|---|---|---|
+| Без AI | четыре основных сервиса | `ENABLE_LOCAL_LLM=false` или отсутствие переменной |
+| Managed GGUF | основные сервисы + `local-llm` | файл/HTTPS URL, SHA-256, model alias |
+| External | четыре основных сервиса + готовый endpoint | base URL `/v1`, model id, при необходимости API key |
+
+`LOCAL_LLM_DISABLE_THINKING` можно оставить пустым: `/no_think` тогда добавляется только для моделей с Qwen в имени. Для другой модели задайте `true` или `false` явно только после проверки её prompt/chat template.
 
 Если `ENABLE_LOCAL_LLM` отсутствует, система безопасно считает его равным `false`. При базовом запуске модель не скачивается, контейнер `local-llm` не создаётся, а отсутствие облачных ключей не мешает работе остальных функций. Старые `ENABLE_LOCAL_QWEN` и `QWEN_*` автоматически мигрируются в `LOCAL_LLM_*` без удаления исходных значений.
 

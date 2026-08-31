@@ -119,6 +119,18 @@ LOCAL_LLM_API_KEY=
 
 Endpoint должен публиковать `GET /v1/models` и `POST /v1/chat/completions`. Собственный контейнер модели не запускается. Deploy выполняет минимальный chat inference и останавливается, если контракт несовместим. Для адреса на хосте Docker используйте `host.docker.internal`, а не `localhost`. В external-режиме профиль сотрудника псевдонимизируется как для облачного провайдера.
 
+`LOCAL_LLM_API_KEY` передаётся только AI Driver и не отображается в `/models/availability`. Не используйте external-режим как способ подключить неизвестный публичный сервис: владелец endpoint, сетевой маршрут, TLS и правила хранения запросов должны быть утверждены до production-запуска.
+
+### Матрица локального провайдера
+
+| `ENABLE_LOCAL_LLM` | `LOCAL_LLM_MODE` | Контейнер `local-llm` | Источник модели |
+|---|---|---|---|
+| `false` или отсутствует | любое допустимое значение | нет | локальная генерация отключена |
+| `true` | `managed` | да | `.gguf` из `models/` или HTTPS URL |
+| `true` | `external` | нет | готовый OpenAI-compatible `/v1` endpoint |
+
+После изменения режима всегда повторяйте штатный `deploy.sh`/`deploy.bat`: прямой `docker compose up` не выполняет валидацию, загрузку, checksum и inference probe.
+
 ### Облачные провайдеры
 
 ```ini
@@ -249,11 +261,15 @@ docker compose restart
 ### Managed-модель не становится healthy
 
 ```bash
-sha256sum models/Qwen3-1.7B-Q4_K_M.gguf
+sha256sum models/<имя-из-LOCAL_LLM_MODEL_FILE>
 docker compose --profile local-ai logs --tail=300 local-llm
 ```
 
 Сверьте имя, checksum, свободную RAM/диск и параметры 4096/4/512/1. Не заменяйте модель файлом с тем же именем без обновления утверждённого hash и повторной приёмки.
+
+### External endpoint не проходит проверку
+
+Проверьте из Docker-сети те же операции, которые требует deploy: список моделей и chat completions. Для сервера на Docker host используйте `host.docker.internal`, а не `localhost`. Убедитесь, что `LOCAL_LLM_MODEL` совпадает с model id endpoint, ключ действителен, а ответ содержит непустой `choices[0].message.content`. Не отключайте inference probe: успешный `/models` ещё не доказывает возможность генерации.
 
 ### API не ready
 
