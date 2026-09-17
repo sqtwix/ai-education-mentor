@@ -9,6 +9,32 @@
 
 > Исторический снимок: выводы ниже относятся к прогону 23 августа 2026 года и commit `7f9e16b`. На 30 августа 2026 года запуск без модели оформлен как штатный production-режим: базовые четыре сервиса проходят health-check, не-ИИ функции доступны, а генерация возвращает `503 MODEL_UNAVAILABLE` до постановки задачи в очередь. Это снимает блокер запуска платформы, но не заменяет отдельную проверку качества реальной LLM-генерации и остальные продуктовые решения из этого отчёта.
 
+## 0. Повторный функциональный прогон и отдельная проверка большого входа — 17 сентября 2026 года
+
+Проверен `main` на commit `2e917b5` с текущими незакоммиченными изменениями документации и smoke-скриптов. Основной функциональный прогон выполнялся без нагрузки. После него отдельно выполнен один максимально допустимый batch из 15 профилей; конкурентные пользователи и нагрузочный поток запросов намеренно не создавались. Runtime: frontend `http://localhost:8088`, API Core `http://127.0.0.1:5050`, AI Driver `http://127.0.0.1:8000`.
+
+| Область | Результат |
+|---|---|
+| Frontend | 6/6 unit tests, oxlint и production build пройдены |
+| API Core | Release build: 0 warnings / 0 errors; исполняемые contract tests JSON/CSV/XLSX/XLS/ZIP и отрицательной file matrix пройдены |
+| AI Driver | 26/26 unit/OpenAPI/grounding/PII/model-availability tests пройдены в production image |
+| Base deploy | `ENABLE_LOCAL_LLM=false`: четыре сервиса healthy, `operating_mode=no-ai`, managed-контейнер отсутствует |
+| No-AI runtime | auth, duplicate/wrong-password, `/me`, settings persistence, Employee→admin 403, каталог, аналитика, history, unknown model, valid/invalid upload и `MODEL_UNAVAILABLE` без очереди пройдены |
+| ACL | 12/12: anonymous 401, owner 200, чужие status/rename/archive/unarchive 404, чужой report отсутствует в history |
+| Platform smoke | Admin metrics, benchmark cache HIT и analysis 429 пройдены; AI-зависимая idempotency явно пропущена при отсутствии настроенного провайдера |
+| Managed GGUF deploy | Qwen3-1.7B checksum, health и минимальный chat inference пройдены; файл повторно не скачивался |
+| Одиночная реальная ИОТ | Все три агента завершили HTTP/model-вызовы; terminal `CompletedWithLimitations`, live progress виден, опубликованные курсы принадлежат каталогу, пройденный курс исключён, неподтверждённый radar пуст |
+| Максимальный batch | 15/15 профилей за 2151 с; принудительный `SIGKILL` AI Driver после checkpoint 2, восстановление со второй попытки, checkpoint очищен; grounding и ограничения результата пройдены; OOM и перезапусков модели нет |
+| UI | Login/session invalidation, каталог 159 программ и поиск, настройки, реальное включение/выключение режима для слабовидящих, повторный цикл смены должности в аналитике пройдены |
+| Backup/restore | Dump восстановлен во временную БД и сверен; временная БД удалена |
+| Финальное состояние | Base no-AI восстановлен; `postgres`, `ai-driver`, `api-core`, `frontend` healthy, restart count 0, OOM false, локальный model-контейнер остановлен |
+
+Найден и исправлен один дефект тестового контура: `platform_runtime_smoke.sh` безусловно использовал DeepSeek и падал на корректном no-AI режиме с 503. Теперь скрипт выбирает только реально доступного провайдера, а без него проверяет ожидаемый `MODEL_UNAVAILABLE`; metrics/cache/rate-limit выполняются в обоих режимах. `no_ai_runtime_smoke.sh` расширен перечисленными выше auth/settings/ACL/upload-регрессиями.
+
+В максимальном batch часть вызовов `trajectory-architect` и `trajectory-justifier` превысила 60-секундный timeout. Pipeline повторил незавершённые вызовы и при повторном timeout использовал предусмотренный детерминированный fallback, поэтому все профили сохранены, но статус обоснованно остался `CompletedWithLimitations`. Стандартное ожидание `iot_large_runtime_smoke.sh` увеличено с 900 до 3600 циклов, чтобы исправный CPU-прогон не считался зависшим раньше времени.
+
+Не проверялись из-за отсутствия внешних доступов: реальные DeepSeek, GigaChat и внешний OpenAI-compatible endpoint. Семантическую оптимальность ИОТ нельзя оценить без экспертного gold dataset. Конкурентная и нагрузочная устойчивость в этом прогоне не оценивались по прямому указанию пользователя; проверялся только один большой вход.
+
 ## 1. Реально запущенные сервисы
 
 | Сервис | Контейнер | Проверка | Результат |

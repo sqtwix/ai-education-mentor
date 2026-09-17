@@ -13,7 +13,10 @@ else
 fi
 PROFILE_COUNT="${PROFILE_COUNT:-15}"
 CHECKPOINT_RESTART_AT="${CHECKPOINT_RESTART_AT:-2}"
-POLL_TIMEOUT_SECONDS="${POLL_TIMEOUT_SECONDS:-900}"
+# The verified CPU profile may need more than 30 minutes for the maximum
+# 15-profile batch. Keep the default above the observed 2151-second run so the
+# smoke detects a real stall instead of failing a healthy sequential pipeline.
+POLL_TIMEOUT_SECONDS="${POLL_TIMEOUT_SECONDS:-3600}"
 RESULT_FILE="${RESULT_FILE:-}"
 
 suffix="$(od -An -N 8 -tx1 /dev/urandom | tr -d ' \n')"

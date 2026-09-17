@@ -64,11 +64,13 @@ scripts/                  runtime, ACL, load, backup/restore smoke
 docker compose ps
 ```
 
-Он запускает frontend, API Core, PostgreSQL и AI Driver. Локальный провайдер включается через `ENABLE_LOCAL_LLM=true`: `managed` запускает profile `local-ai`, `external` использует готовый OpenAI-compatible endpoint без пятого контейнера.
+Он запускает frontend, API Core, PostgreSQL и AI Driver. Локальный провайдер включается через `ENABLE_LOCAL_LLM=true`: `managed` запускает profile `local-ai`, `external` использует готовый OpenAI-compatible endpoint без пятого контейнера. `ENABLE_LOCAL_LLM=false` не отключает облачные провайдеры: они независимо включаются непустыми `DEEPSEEK_API_KEY` и `SBERGPT_API_KEY`.
 
 Канонический идентификатор провайдера во frontend, API Core, новых записях БД и AI Driver — `local_llm`. Значения `qwen_local` и старый AI Driver route принимаются только для обратной совместимости и нормализуются в `local_llm`; новый код не должен сохранять старый идентификатор.
 
 В managed-режиме runtime получает `LOCAL_LLM_MODEL_FILE`, а запросы используют alias `LOCAL_LLM_MODEL`. В external-режиме файл и checksum не участвуют: клиент использует `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL` и необязательный `LOCAL_LLM_API_KEY`. Оба режима обязаны пройти стандартные `/models` и `/chat/completions`; provider-specific ветвления нельзя добавлять без теста и документированного контракта.
+
+Источник истины для параметров — `env_example.txt`; `docker-compose.yml` задаёт только безопасные fallback-значения. `scripts/init_env.sh` и `scripts/init_env.ps1` создают/дополняют `.env`, отвергают дубликаты и неоднозначные пробелы и мигрируют старые `QWEN_*` в `LOCAL_LLM_*`. При добавлении нового параметра синхронно обновляйте шаблон, Compose, оба init-скрипта, deploy-валидацию и административное руководство.
 
 Единственная рекомендуемая production-точка входа — `deploy.sh` / `deploy.bat`: они создают конфигурацию, валидируют Compose и дожидаются healthchecks. Прямой `docker compose up` предназначен для разработки/диагностики и требует уже готовый `.env`.
 
@@ -214,16 +216,23 @@ dotnet run --project ApiCore.ContractTests/ApiCore.ContractTests.csproj -c Relea
 
 ### Runtime-проверки
 
-Запускайте из корня при healthy stack:
+Запускайте из корня при healthy stack. Функциональный набор без нагрузки:
 
 ```bash
 ./scripts/iot_runtime_smoke.sh
 ./scripts/no_ai_runtime_smoke.sh
-./scripts/iot_multi_user_runtime_smoke.sh
 ./scripts/qa_acl_smoke.sh
 ./scripts/platform_runtime_smoke.sh
-PROFILE_COUNT=15 ./scripts/iot_large_runtime_smoke.sh
 ./scripts/backup_restore_smoke.sh
+```
+
+`no_ai_runtime_smoke.sh` проверяет auth, настройки, ACL административных метрик, каталог, аналитику, историю, валидную/невалидную загрузку и отказ генерации без постановки задачи. `platform_runtime_smoke.sh` всегда проверяет admin metrics, benchmark cache и rate limit; идемпотентность задачи проверяется только если доступен хотя бы один реальный провайдер.
+
+Многопользовательские, максимальные batch и read-load проверки запускайте отдельно только в разрешённом тестовом окне:
+
+```bash
+./scripts/iot_multi_user_runtime_smoke.sh
+PROFILE_COUNT=15 ./scripts/iot_large_runtime_smoke.sh
 python3 scripts/api_read_load_probe.py --requests 300 --concurrency 12
 ```
 

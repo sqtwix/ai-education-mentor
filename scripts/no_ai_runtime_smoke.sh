@@ -73,11 +73,23 @@ register_payload="$(jq -nc --arg email "$email" --arg password "$password" \
 assert_code 200 "$(request_code '' POST '/auth/register' "$register_payload")" "registration"
 token="$(jq -er '.token' "$response_file")"
 
+assert_code 400 "$(request_code '' POST '/auth/register' "$register_payload")" "duplicate registration"
+wrong_login_payload="$(jq -nc --arg email "$email" '{email:$email,password:"Wrong-Password-2026!"}')"
+assert_code 401 "$(request_code '' POST '/auth/login' "$wrong_login_payload")" "wrong password"
+assert_code 200 "$(request_code "$token" GET '/me')" "current user"
+jq -e --arg email "$email" '.email == $email and .role == "Employee"' "$response_file" >/dev/null
+
 assert_code 200 "$(request_code "$token" GET '/analysis/catalog')" "catalog"
 jq -e 'length > 0' "$response_file" >/dev/null
 assert_code 200 "$(request_code "$token" GET '/analysis/benchmarks')" "benchmarks"
 assert_code 200 "$(request_code "$token" GET '/analysis/history')" "history"
 assert_code 200 "$(request_code "$token" GET '/user/settings')" "settings"
+settings_payload='{"theme":"dark","accessibility":{"enabled":false,"fontSize":"large","colorScheme":"light"},"minimalUi":true}'
+assert_code 200 "$(request_code "$token" PUT '/user/settings' "$settings_payload")" "save settings"
+jq -e '.theme == "dark" and .minimalUi == true' "$response_file" >/dev/null
+assert_code 200 "$(request_code "$token" GET '/user/settings')" "persisted settings"
+jq -e '.theme == "dark" and .minimalUi == true' "$response_file" >/dev/null
+assert_code 403 "$(request_code "$token" GET '/operations/metrics')" "employee operations metrics"
 assert_code 200 "$(request_code "$token" GET '/analysis/models')" "model availability"
 jq -e '.generation_available == false and .operating_mode == "no-ai"' "$response_file" >/dev/null
 
@@ -101,9 +113,31 @@ legacy_payload="$(printf '%s' "$generation_payload" | jq '.request_id += "-legac
 assert_code 503 "$(request_code "$token" POST '/analysis/generate-trajectory' "$legacy_payload")" "legacy local provider alias"
 jq -e '.code == "MODEL_UNAVAILABLE"' "$response_file" >/dev/null
 
+unknown_model_payload="$(printf '%s' "$generation_payload" | jq '.request_id += "-unknown" | .model_type = "unknown-model"')"
+assert_code 400 "$(request_code "$token" POST '/analysis/generate-trajectory' "$unknown_model_payload")" "unknown model"
+
+unsupported_upload_status="$(curl -sS -o "$response_file" -w '%{http_code}' \
+    -X POST "$API_URL/analysis/upload" \
+    -H "Authorization: Bearer $token" \
+    -F 'modelType=local_llm' \
+    -F 'requestId=no-ai-unsupported-upload' \
+    -F "userResponseFiles=@$PROJECT_DIR/example_files/Буклет Линейка программ на 2025 (2).pdf")"
+assert_code 400 "$unsupported_upload_status" "unsupported upload extension"
+
+valid_upload_id="${request_id}-upload"
+valid_upload_status="$(curl -sS -o "$response_file" -w '%{http_code}' \
+    -X POST "$API_URL/analysis/upload" \
+    -H "Authorization: Bearer $token" \
+    -F 'modelType=local_llm' \
+    -F "requestId=$valid_upload_id" \
+    -F "userResponseFiles=@$PROJECT_DIR/TEST_PROFILE_IOT.json")"
+assert_code 503 "$valid_upload_status" "valid upload without model"
+jq -e '.code == "MODEL_UNAVAILABLE"' "$response_file" >/dev/null
+
 assert_code 200 "$(request_code "$token" GET '/analysis/history')" "history after rejected generation"
 jq -e --arg request_id "$request_id" 'all(.[]; .id != $request_id)' "$response_file" >/dev/null
 jq -e --arg request_id "${request_id}-legacy" 'all(.[]; .id != $request_id)' "$response_file" >/dev/null
+jq -e --arg request_id "$valid_upload_id" 'all(.[]; .id != $request_id)' "$response_file" >/dev/null
 
 if docker ps \
     --filter "label=com.docker.compose.project=$PROJECT_NAME" \
@@ -113,4 +147,4 @@ if docker ps \
     exit 1
 fi
 
-echo "No-AI runtime smoke passed: platform ready, non-AI features available, generation rejected without queueing."
+echo "No-AI runtime smoke passed: auth/settings/ACL/catalog/analytics/uploads work; unavailable or unknown models are rejected without queueing."

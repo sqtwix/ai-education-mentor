@@ -31,10 +31,12 @@
 - [x] Docker JSON-логи всех сервисов ограничены ротацией `10m × 5`, чтобы длительная эксплуатация не заполняла диск.
 - [x] Локальный model endpoint не публикуется на хосте; при включении `local-ai` llama.cpp закреплён immutable digest, а модель и deploy проверяются обязательным SHA256.
 - [x] Базовый стек запускается при `ENABLE_LOCAL_LLM=false` без GGUF и облачных ключей; каталог, аналитика, аккаунты, история и настройки доступны, генерация возвращает `MODEL_UNAVAILABLE`.
+- [x] `ENABLE_LOCAL_LLM=false` отключает только локальный provider: настроенные DeepSeek/GigaChat остаются независимыми вариантами генерации.
 - [x] Локальный provider поддерживает managed GGUF и external OpenAI-compatible endpoint; deploy проверяет `/models` и минимальный chat inference, а старые `QWEN_*` мигрируются без потери значений.
 - [x] Managed runtime проверен с эталонной Qwen3 и отдельным файлом `qwen2.5-0.5b-instruct-q8_0.gguf`; имя модели не зашито в pipeline.
 - [x] Контракт external-режима проверен реальным OpenAI-compatible chat запросом; external Compose-конфигурация содержит четыре сервиса и не включает managed `local-llm`, адрес host runtime документирован через `host.docker.internal`.
-- [x] `./scripts/no_ai_runtime_smoke.sh` подтверждает readiness базового стека, `operating_mode=no-ai`, доступность не-ИИ API и отсутствие новой задачи в очереди после отклонённой генерации.
+- [x] `./scripts/no_ai_runtime_smoke.sh` подтверждает readiness базового стека, auth/settings/ACL, каталог, аналитику, валидную и невалидную загрузку, `operating_mode=no-ai` и отсутствие новой задачи после отклонённой генерации.
+- [x] `./scripts/platform_runtime_smoke.sh` работает и без настроенного провайдера: проверяет metrics/cache/rate-limit и явно пропускает только AI-зависимую идемпотентность.
 
 ## Данные и рекомендации
 

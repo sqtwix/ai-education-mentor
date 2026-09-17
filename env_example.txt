@@ -35,12 +35,15 @@ UPLOAD_MAX_ARCHIVE_ENTRIES=100
 UPLOAD_MAX_ARCHIVE_UNCOMPRESSED_BYTES=104857600
 UPLOAD_MAX_ARCHIVE_COMPRESSION_RATIO=100
 # ЛОКАЛЬНАЯ OPENAI-COMPATIBLE МОДЕЛЬ (ОПЦИОНАЛЬНО)
-# false: платформа работает без локальной модели. true: включить выбранный режим.
+# false: локальная модель выключена; облачные провайдеры настраиваются независимо.
+# true: включить выбранный managed/external режим.
 # managed: встроенный llama.cpp + проверенный GGUF из ./models или HTTPS URL.
 # external: уже запущенный OpenAI-compatible endpoint; контейнер модели не создаётся.
 ENABLE_LOCAL_LLM=false
 LOCAL_LLM_MODE=managed
 LOCAL_LLM_MODEL_FILE=Qwen3-1.7B-Q4_K_M.gguf
+# В managed-режиме файл скачивается только если его ещё нет в ./models.
+# URL обязан быть HTTPS, а SHA-256 проверяется и для скачанного, и для готового файла.
 LOCAL_LLM_MODEL_URL=https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf
 LOCAL_LLM_MODEL_SHA256=d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5
 LOCAL_LLM_BASE_URL=
