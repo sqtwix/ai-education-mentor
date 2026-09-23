@@ -58,7 +58,9 @@ LOCAL_LLM_PARALLEL=1
 # Таймаут одного ответа. Локальному CPU runtime требуется больше времени,
 # чем облачному API; допустимый диапазон в AI Driver: 5–600 секунд.
 AI_REQUEST_TIMEOUT_SECONDS=60
-AI_LOCAL_REQUEST_TIMEOUT_SECONDS=120
+AI_LOCAL_REQUEST_TIMEOUT_SECONDS=300
+# Общий таймаут полного конвейера из нескольких агентов в API Core.
+AI_DRIVER_REQUEST_TIMEOUT_SECONDS=1200
 AI_MODEL_READINESS_TIMEOUT_SECONDS=180
 AI_MODEL_READINESS_POLL_SECONDS=2
 AI_CATALOG_CANDIDATE_LIMIT=10

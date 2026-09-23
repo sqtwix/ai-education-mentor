@@ -54,6 +54,14 @@ if (Test-Path $envFile) {
         }
     }
 
+    # Migrate only the former generated default; preserve customized values.
+    $content = [System.IO.File]::ReadAllText($envFile)
+    if ($content -match '(?m)^AI_LOCAL_REQUEST_TIMEOUT_SECONDS=120$') {
+        $content = $content -replace '(?m)^AI_LOCAL_REQUEST_TIMEOUT_SECONDS=120$', 'AI_LOCAL_REQUEST_TIMEOUT_SECONDS=300'
+        [System.IO.File]::WriteAllText($envFile, $content, [System.Text.UTF8Encoding]::new($false))
+        Write-Host "--> Migrated AI_LOCAL_REQUEST_TIMEOUT_SECONDS default from 120 to 300."
+    }
+
     foreach ($line in [System.IO.File]::ReadAllLines($templateFile)) {
         if ($line -match '^([A-Za-z_][A-Za-z0-9_]*)=') {
             $key = $Matches[1]

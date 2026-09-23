@@ -134,6 +134,10 @@ public class FileParser
             int statusIdx = FindColumnIndex(headers, new[] { "статус", "статус курса", "статус программы", "статус прохождения", "результат прохождения", "состояние обучения", "итог обучения" });
             int experienceIdx = FindColumnIndex(headers, new[] { "стаж", "стаж лет", "experience years", "опыт", "опыт лет" });
             int goalIdx = FindColumnIndex(headers, new[] { "цель обучения", "карьерная цель", "целевой вектор", "career goal" });
+            if (typeIdx < 0)
+            {
+                typeIdx = InferCourseTypeColumn(rows, [fioIdx, posIdx, iogvIdx, courseIdx, statusIdx, experienceIdx, goalIdx]);
+            }
 
         for (int r = 1; r < rows.Count; r++)
             {
@@ -289,6 +293,63 @@ public class FileParser
             }
         }
         return -1;
+    }
+
+    private static int InferCourseTypeColumn(List<List<string>> rows, IReadOnlyCollection<int> excludedIndexes)
+    {
+        var knownTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "эк", "ппк" };
+        var columnCount = rows.Max(row => row.Count);
+
+        for (var columnIndex = 0; columnIndex < columnCount; columnIndex++)
+        {
+            if (excludedIndexes.Contains(columnIndex)) continue;
+
+            var values = rows.Skip(1)
+                .Select(row => GetValueSafely(row, columnIndex))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(NormalizeHeader)
+                .ToList();
+
+            if (values.Count > 0 && values.All(knownTypes.Contains))
+            {
+                return columnIndex;
+            }
+        }
+
+        return -1;
+    }
+
+    public static List<EmployeeProfileDto> SelectProfilesForAnalysis(
+        List<EmployeeProfileDto> profiles,
+        string? selectedFio,
+        string? careerGoal)
+    {
+        var selected = profiles;
+        if (!string.IsNullOrWhiteSpace(selectedFio))
+        {
+            var normalizedFio = NormalizePersonName(selectedFio);
+            selected = profiles
+                .Where(profile => string.Equals(
+                    NormalizePersonName(profile.Fio),
+                    normalizedFio,
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(careerGoal))
+        {
+            foreach (var profile in selected)
+            {
+                profile.CareerGoal = careerGoal.Trim();
+            }
+        }
+
+        return selected;
+    }
+
+    private static string NormalizePersonName(string? value)
+    {
+        return Regex.Replace(value?.Trim() ?? string.Empty, @"\s+", " ");
     }
 
     private static string NormalizeHeader(string value)

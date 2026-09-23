@@ -67,6 +67,15 @@ if [ -f "$ENV_FILE" ]; then
     migrate_legacy_key QWEN_BATCH_SIZE LOCAL_LLM_BATCH_SIZE
     migrate_legacy_key QWEN_PARALLEL LOCAL_LLM_PARALLEL
 
+    # 120 seconds was the former generated default and is insufficient for
+    # registry profiles with a full learning history on CPU-only machines.
+    # Preserve every explicitly customized value.
+    if grep -q '^AI_LOCAL_REQUEST_TIMEOUT_SECONDS=120$' "$ENV_FILE"; then
+        sed -i.bak 's/^AI_LOCAL_REQUEST_TIMEOUT_SECONDS=120$/AI_LOCAL_REQUEST_TIMEOUT_SECONDS=300/' "$ENV_FILE"
+        rm -f "${ENV_FILE}.bak"
+        echo "--> Migrated AI_LOCAL_REQUEST_TIMEOUT_SECONDS default from 120 to 300."
+    fi
+
     while IFS= read -r template_line || [ -n "$template_line" ]; do
         template_line="${template_line%$'\r'}"
         [[ "$template_line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue

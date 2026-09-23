@@ -24,7 +24,7 @@ class AgentClientJsonTests(unittest.TestCase):
 
         self.assertEqual(result, '{"status": "ok"}')
         self.assertEqual(openai_mock.call_args.kwargs["max_retries"], 0)
-        self.assertEqual(api.chat.completions.create.call_args.kwargs["timeout"], 120)
+        self.assertEqual(api.chat.completions.create.call_args.kwargs["timeout"], 300)
         sent_messages = api.chat.completions.create.call_args.kwargs["messages"]
         self.assertTrue(sent_messages[0]["content"].endswith("/no_think"))
 

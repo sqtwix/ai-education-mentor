@@ -252,7 +252,13 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
           throw new Error("Выберите хотя бы один файл с данными профиля или истории обучения.");
         }
         // Загрузка через файлы
-        const res = await uploadFiles(uploadedFiles, selectedModel, getSubmissionRequestId());
+        const res = await uploadFiles(
+          uploadedFiles,
+          selectedModel,
+          getSubmissionRequestId(),
+          fio,
+          careerGoal
+        );
         const taskId = res.task_id || res.id;
         if (!taskId) throw new Error("Backend API не вернул идентификатор задачи.");
         clearDraft();
@@ -584,6 +590,30 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
                   ))}
                 </div>
               )}
+
+              <div className="form-grid two-col" style={{ marginTop: "18px" }}>
+                <label className="form-group">
+                  <span className="form-label">ФИО сотрудника из реестра</span>
+                  <input
+                    type="text"
+                    value={fio}
+                    onChange={(event) => setFio(event.target.value)}
+                    placeholder="Например: Пользователь 1"
+                    autoComplete="off"
+                  />
+                  <small className="muted">Нужно для выгрузок, содержащих более 15 сотрудников.</small>
+                </label>
+                <label className="form-group">
+                  <span className="form-label">Цель обучения</span>
+                  <textarea
+                    value={careerGoal}
+                    onChange={(event) => setCareerGoal(event.target.value)}
+                    placeholder="Опишите желаемый результат обучения"
+                    rows={3}
+                  />
+                  <small className="muted">Будет применена к выбранному сотруднику при формировании ИОТ.</small>
+                </label>
+              </div>
             </div>
           )}
         </div>

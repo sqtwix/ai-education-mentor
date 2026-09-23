@@ -95,6 +95,25 @@ try
     Assert(ambiguousProfiles[0].LearningHistory.Single().CourseName == "Основы анализа данных", "Course must come from 'Наименование программы'");
     Assert(ambiguousProfiles[0].LearningHistory.Single().Status == "Пройден", "Status must come from 'Статус программы'");
 
+    var blankTypeHeaderXlsxPath = Path.Combine(testRoot, "blank-type-header.xlsx");
+    CreateMinimalXlsx(blankTypeHeaderXlsxPath,
+    [
+        ["ФИО", "Должность", "ИОГВ", "", "Курс", "Статус"],
+        ["Пользователь 1", "Главный специалист", "Тестовое ведомство", "ЭК", "Основы анализа данных", "Пройден"],
+        ["Пользователь 1", "Главный специалист", "Тестовое ведомство", "ППК", "Управление проектами", "Не пройден"]
+    ]);
+    var blankTypeHeaderProfiles = parser.ParseHistoryFiles([blankTypeHeaderXlsxPath]);
+    Assert(blankTypeHeaderProfiles.Count == 1, "Registry layout with a blank course-type header must preserve the employee");
+    Assert(blankTypeHeaderProfiles[0].LearningHistory.Select(item => item.CourseType).SequenceEqual(["ЭК", "ППК"]), "Known course types must be inferred from an unlabeled column");
+
+    var selectedRegistryProfiles = FileParser.SelectProfilesForAnalysis(
+        blankTypeHeaderProfiles,
+        "  пользователь   1 ",
+        "Развитие навыков проектного управления");
+    Assert(selectedRegistryProfiles.Count == 1, "Employee selection must ignore case and repeated spaces");
+    Assert(selectedRegistryProfiles[0].CareerGoal == "Развитие навыков проектного управления", "Uploaded career goal must be applied to the selected employee");
+    Assert(validator.ValidateEmployeeProfiles(selectedRegistryProfiles).IsValid, "Selected registry profile with an explicit goal must pass validation");
+
     var unknownLayoutCsvPath = Path.Combine(testRoot, "unknown-layout.csv");
     await File.WriteAllTextAsync(
         unknownLayoutCsvPath,

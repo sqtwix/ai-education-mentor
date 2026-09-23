@@ -82,6 +82,7 @@ public class ValidationService
         if (profiles.Count > maxProfiles)
         {
             result.AddError($"В одном пакете допускается не более {maxProfiles} профилей; найдено: {profiles.Count}.");
+            return result;
         }
 
         for (var index = 0; index < profiles.Count; index++)

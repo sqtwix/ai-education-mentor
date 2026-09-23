@@ -68,7 +68,7 @@ class AgentClient:
             )
             self.request_timeout_seconds = _bounded_timeout(
                 timeout_variable,
-                120 if self.is_local_runtime else 60,
+                300 if self.is_local_runtime else 60,
             )
             # OpenAI клиент работает для всех совместимых API (DeepSeek, GigaChat, vLLM/llama.cpp)
             self.client = OpenAI(

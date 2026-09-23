@@ -240,7 +240,8 @@ builder.Services.AddHttpClient<AnalysisService>(client =>
 {
     var aiDriverUrl = builder.Configuration["AiDriver:Url"] ?? "http://localhost:8000";
     client.BaseAddress = new Uri(aiDriverUrl.EndsWith("/") ? aiDriverUrl : aiDriverUrl + "/");
-    client.Timeout = TimeSpan.FromMinutes(5); // Увеличиваем таймаут для медленных CPU запусков локальных моделей
+    var configuredTimeout = builder.Configuration.GetValue<int?>("AiDriver:RequestTimeoutSeconds") ?? 1200;
+    client.Timeout = TimeSpan.FromSeconds(Math.Clamp(configuredTimeout, 30, 3600));
 });
 builder.Services.AddHttpClient("AiDriverStatus", client =>
 {

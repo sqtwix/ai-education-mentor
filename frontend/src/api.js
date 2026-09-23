@@ -142,6 +142,13 @@ export async function request(endpoint, options = {}) {
         if (contentType.toLowerCase().includes("application/json")) {
           const errData = JSON.parse(responseText);
           errorMsg = errData.error || errData.message || errorMsg;
+          if (Array.isArray(errData.details) && errData.details.length > 0) {
+            const visibleDetails = errData.details.slice(0, 3).join(" ");
+            const remainder = errData.details.length > 3
+              ? ` Ещё ошибок: ${errData.details.length - 3}.`
+              : "";
+            errorMsg = `${errorMsg} ${visibleDetails}${remainder}`;
+          }
         } else if (!responseText.trimStart().startsWith("<")) {
           errorMsg = responseText;
         }
@@ -222,13 +229,21 @@ export async function generateTrajectory(employee, modelType = "deepseek", reque
 }
 
 // Загрузка реестров и файлов истории
-export async function uploadFiles(userResponseFiles, modelType = "deepseek", requestId = "") {
+export async function uploadFiles(
+  userResponseFiles,
+  modelType = "deepseek",
+  requestId = "",
+  selectedFio = "",
+  careerGoal = ""
+) {
   const formData = new FormData();
   userResponseFiles.forEach((file) => {
     formData.append("userResponseFiles", file);
   });
   formData.append("modelType", modelType.toLowerCase());
   if (requestId) formData.append("requestId", requestId);
+  if (selectedFio.trim()) formData.append("selectedFio", selectedFio.trim());
+  if (careerGoal.trim()) formData.append("careerGoal", careerGoal.trim());
 
   return request("/analysis/upload", {
     method: "POST",
