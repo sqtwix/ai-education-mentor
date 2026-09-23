@@ -60,6 +60,25 @@ class OpenApiContractTests(unittest.TestCase):
                 with self.assertRaises(ValidationError):
                     TrajectoryRequest.model_validate(payload)
 
+    def test_trajectory_request_accepts_registry_profile_without_career_goal_value(self):
+        request = TrajectoryRequest.model_validate({
+            "employee": {
+                "fio": "Пользователь 1",
+                "position": "Главный специалист",
+                "department": "Администрация Губернатора",
+                "career_goal": "",
+                "learning_history": [
+                    {
+                        "course_name": "Основы Конституции Российской Федерации",
+                        "course_type": "ЭК",
+                        "status": "Пройден",
+                    }
+                ],
+            }
+        })
+
+        self.assertEqual(request.employee.career_goal, "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -25,6 +25,15 @@ DATA_DIR = BASE_DIR / "data"
 logger = logging.getLogger(__name__)
 
 class AgentManager:
+    MAX_RECOMMENDED_COURSES = 3
+    _COMPLETED_STATUSES = frozenset({
+        "пройден", "завершен", "завершён", "успешно", "passed", "completed", "done",
+    })
+    _PENDING_STATUSES = frozenset({
+        "не пройден", "не завершен", "не завершён", "назначен", "назначено", "в процессе",
+        "not passed", "not completed", "failed", "incomplete", "pending", "in progress",
+    })
+
     def __init__(self, agent_factory: AgentFactory):
         try:
             self.agent_factory = agent_factory
@@ -81,6 +90,61 @@ class AgentManager:
     @staticmethod
     def _is_local_model(model_type: str) -> bool:
         return model_type in {"local_llm", "qwen_local", "qwen", "local"}
+
+    @classmethod
+    def _classify_learning_history(cls, learning_history: Any) -> Dict[str, Any]:
+        """Normalize history once and never infer a pending course from an unknown status."""
+        rows = learning_history if isinstance(learning_history, list) else []
+        deduplicated_history: List[Dict[str, Any]] = []
+        seen_rows: Set[Tuple[str, str, str]] = set()
+        completed_display: Dict[str, str] = {}
+        pending_display: Dict[str, str] = {}
+        unknown_statuses: List[Dict[str, str]] = []
+        duplicate_count = 0
+
+        for raw_item in rows:
+            if not isinstance(raw_item, dict):
+                continue
+            course_name = re.sub(r"\s+", " ", str(raw_item.get("course_name", "")).strip())
+            course_type = re.sub(r"\s+", " ", str(raw_item.get("course_type", "")).strip())
+            status = re.sub(r"\s+", " ", str(raw_item.get("status", "")).strip())
+            if not course_name:
+                continue
+
+            row_key = (course_name.casefold(), course_type.casefold(), status.casefold())
+            if row_key in seen_rows:
+                duplicate_count += 1
+            else:
+                seen_rows.add(row_key)
+                deduplicated_history.append({
+                    "course_name": course_name,
+                    "course_type": course_type,
+                    "status": status,
+                })
+
+            course_key = course_name.casefold()
+            status_key = status.casefold()
+            if status_key in cls._COMPLETED_STATUSES:
+                completed_display.setdefault(course_key, course_name)
+            elif status_key in cls._PENDING_STATUSES:
+                pending_display.setdefault(course_key, course_name)
+            elif not any(
+                item["course_name"].casefold() == course_key and item["status"].casefold() == status_key
+                for item in unknown_statuses
+            ):
+                unknown_statuses.append({"course_name": course_name, "status": status})
+
+        conflicting_names = set(completed_display) & set(pending_display)
+        return {
+            "deduplicated_history": deduplicated_history,
+            "completed_names": set(completed_display),
+            "pending_names": set(pending_display) - set(completed_display),
+            "completed_display": completed_display,
+            "pending_display": pending_display,
+            "conflicting_names": conflicting_names,
+            "unknown_statuses": unknown_statuses,
+            "duplicate_count": duplicate_count,
+        }
 
     @staticmethod
     def _wait_for_local_model() -> bool:
@@ -167,7 +231,12 @@ class AgentManager:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
 
-    def _generation_metadata(self, model_type: str, quality_status: str) -> Dict[str, Any]:
+    def _generation_metadata(
+        self,
+        model_type: str,
+        quality_status: str,
+        generation_mode: str = "llm",
+    ) -> Dict[str, Any]:
         model_env = {
             "deepseek": "DEEPSEEK_MODEL",
             "sbergpt": "SBERGPT_MODEL",
@@ -188,7 +257,7 @@ class AgentManager:
                 or model_version
             ).strip()
         return {
-            "generation_mode": "fallback" if quality_status == "degraded" else "llm",
+            "generation_mode": generation_mode,
             "quality_status": quality_status,
             "model_version": model_version,
             "prompt_version": self.prompt_version,
@@ -285,7 +354,8 @@ class AgentManager:
         career_goal: str, 
         position: str, 
         department: str,
-        popular_courses: Dict[str, Any]
+        popular_courses: Dict[str, Any],
+        pending_course_names: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Детерминированное ранжирование всего доступного каталога:
@@ -295,6 +365,7 @@ class AgentManager:
         goal_roots = self._significant_roots(career_goal)
         normalized_goal = self._normalized_words(career_goal)
         popular_by_name = {name.casefold(): value for name, value in popular_courses.items()}
+        pending_names = {name.casefold() for name in (pending_course_names or set())}
         
         def score_course(item: Dict[str, Any]) -> float:
             score = 0.0
@@ -316,6 +387,12 @@ class AgentManager:
                 success_rate = pop_info.get("success_rate")
                 score += (popularity if isinstance(popularity, (int, float)) else 0) * 0.8
                 score += ((success_rate if isinstance(success_rate, (int, float)) else 50) - 50) * 0.2
+
+            # «Не пройден» в исходной истории — прямое подтверждение того,
+            # что программа уже была назначена/выбрана для сотрудника. Такой
+            # сигнал допустим и при отсутствии отдельной карьерной цели.
+            if name.casefold() in pending_names:
+                score += 500.0
                 
             return score
 
@@ -378,14 +455,17 @@ class AgentManager:
         ranked_catalog: List[Dict[str, Any]],
         career_goal: str,
         popular_courses: Dict[str, Any],
+        pending_course_names: Optional[Set[str]] = None,
     ) -> Dict[str, Any]:
         popular_names = {name.casefold() for name in popular_courses}
+        pending_names = {name.casefold() for name in (pending_course_names or set())}
         supported = [
             course
             for course in ranked_catalog
             if self._course_matches_goal(course, career_goal)
             or str(course.get("name", "")).casefold() in popular_names
-        ][:3]
+            or str(course.get("name", "")).casefold() in pending_names
+        ][:self.MAX_RECOMMENDED_COURSES]
         return {
             "stages": [{
                 "stage_number": 1,
@@ -411,6 +491,7 @@ class AgentManager:
         catalog_candidates: List[Dict[str, Any]],
         career_goal: str,
         popular_courses: Dict[str, Any],
+        pending_course_names: Optional[Set[str]] = None,
     ) -> tuple[Dict[str, Any], bool]:
         """Bound the intermediate plan to grounded, relevant catalog candidates."""
         by_id = {
@@ -424,6 +505,7 @@ class AgentManager:
             if item.get("name")
         }
         popular_names = {str(name).casefold() for name in popular_courses}
+        pending_names = {name.casefold() for name in (pending_course_names or set())}
         raw_courses = [
             course
             for stage in plan.get("stages", [])
@@ -445,7 +527,11 @@ class AgentManager:
             canonical_name = str(item.get("name", "")).casefold()
             if canonical_id in seen_ids:
                 continue
-            if not self._course_matches_goal(item, career_goal) and canonical_name not in popular_names:
+            if (
+                not self._course_matches_goal(item, career_goal)
+                and canonical_name not in popular_names
+                and canonical_name not in pending_names
+            ):
                 continue
             seen_ids.add(canonical_id)
             accepted.append({
@@ -491,6 +577,8 @@ class AgentManager:
             if not real_fio or not position or not department:
                 raise ValueError("employee fio, position and department are required")
             learning_history = employee_data.get("learning_history", [])
+            history_facts = self._classify_learning_history(learning_history)
+            normalized_learning_history = history_facts["deduplicated_history"]
             
             # Встроенный managed runtime остаётся внутри Docker-сети. Внешний
             # OpenAI-compatible endpoint получает ту же псевдонимизацию, что и
@@ -507,24 +595,20 @@ class AgentManager:
                     "course_type": self._mask_external_text(item.get("course_type", ""), real_fio, safe_fio),
                     "status": self._mask_external_text(item.get("status", ""), real_fio, safe_fio),
                 }
-                for item in learning_history
+                for item in normalized_learning_history
                 if isinstance(item, dict)
-            ] if is_external_model else learning_history
-            model_completed_course_names = {
-                str(item.get("course_name", "")).strip().casefold()
-                for item in model_learning_history
-                if isinstance(item, dict)
-                and str(item.get("status", "")).strip().casefold() in {"пройден", "passed", "успешно", "done"}
-                and str(item.get("course_name", "")).strip()
-            }
+            ] if is_external_model else normalized_learning_history
+            model_completed_course_names = set(
+                self._classify_learning_history(model_learning_history)["completed_names"]
+            )
             
-            # Список исключаемых пройденных курсов (СТРОГО без дублей)
-            completed_course_names = set()
-            for h in learning_history:
-                st = str(h.get("status", "")).strip().lower()
-                c_name = str(h.get("course_name", "")).strip()
-                if st in ["пройден", "passed", "успешно", "done"] and c_name:
-                    completed_course_names.add(c_name.lower())
+            # Completion wins over contradictory pending rows. Unknown statuses
+            # are diagnostic facts, never an implicit recommendation signal.
+            completed_course_names = set(history_facts["completed_names"])
+            pending_course_names = {
+                history_facts["pending_display"][name]
+                for name in history_facts["pending_names"]
+            }
             
             # Получаем реальный бенчмарк по когорте (должность + ИОГВ)
             cohort_benchmark = self._find_cohort_benchmark(position, department)
@@ -559,7 +643,8 @@ class AgentManager:
             
             # Ранжируем кандидатов по всему доступному каталогу
             ranked_catalog = self._rank_catalog_candidates(
-                available_catalog, career_goal, position, department, popular_courses_dict
+                available_catalog, career_goal, position, department, popular_courses_dict,
+                pending_course_names,
             )
             self._set_progress(request_id, "course_selection", "Сопоставляем профиль с программами официального каталога.", 58)
             
@@ -628,19 +713,21 @@ class AgentManager:
                 )
                 architect_res = self._validated_agent_object(architect_raw, "stages")
                 architect_res, architect_changed = self._sanitize_architect_plan(
-                    architect_res, catalog_sample, career_goal, popular_courses_dict
+                    architect_res, catalog_sample, career_goal, popular_courses_dict,
+                    pending_course_names,
                 )
                 if architect_changed:
                     pipeline_degraded = True
                     pipeline_limitations.append(
-                        "Часть кандидатов агента проектирования отклонена: они не подтверждены переданным каталогом или заявленной целью."
+                        "Часть кандидатов агента проектирования отклонена: для них не найдены проверяемые основания "
+                        "в цели, непройденной истории обучения или когортном срезе."
                     )
             except Exception as exception:
                 pipeline_degraded = True
                 pipeline_limitations.append("Ответ агента проектирования отклонен; применен проверяемый серверный отбор.")
                 logger.warning("[%s] trajectory-architect response rejected (%s)", model_type, type(exception).__name__)
                 architect_res = self._deterministic_trajectory_plan(
-                    ranked_catalog, career_goal, popular_courses_dict
+                    ranked_catalog, career_goal, popular_courses_dict, pending_course_names
                 )
             self._set_progress(request_id, "result_formation", "Проверяем обоснования и формируем итоговую траекторию.", 82)
 
@@ -695,7 +782,7 @@ class AgentManager:
             # и возвращаем реальное ФИО сотрудника
             final_trajectory = self._enrich_and_validate_trajectory(
                 justifier_res, real_fio, position, department, career_goal, completed_course_names, top_colleague_courses,
-                total_colleagues, cohort_note, cohort_type, ranked_catalog
+                total_colleagues, cohort_note, cohort_type, ranked_catalog, pending_course_names, history_facts
             )
             for limitation in pipeline_limitations:
                 if limitation not in final_trajectory["limitations"]:
@@ -740,7 +827,9 @@ class AgentManager:
         total_colleagues: int,
         cohort_note: str,
         cohort_type: str,
-        ranked_catalog: List[Dict[str, Any]]
+        ranked_catalog: List[Dict[str, Any]],
+        pending_course_names: Optional[Set[str]] = None,
+        history_facts: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Проверка и обогащение метаданными из каталога:
@@ -749,16 +838,44 @@ class AgentManager:
         - Доказательное обоснование со ссылкой на коллег
         """
         # Поиск по имени в каталоге
-        catalog_by_name = {c["name"].lower(): c for c in self.catalog}
+        catalog_by_name = {c["name"].casefold(): c for c in self.catalog}
         catalog_by_id = {str(c.get("id", "")).casefold(): c for c in self.catalog if c.get("id")}
         top_colleague_names = {c.get("course_name", "").lower(): c for c in top_colleague_courses}
+        pending_display_by_name = dict((history_facts or {}).get("pending_display", {})) or {
+            name.casefold(): name.strip() for name in (pending_course_names or set()) if name.strip()
+        }
+        completed_names = set((history_facts or {}).get("completed_names", set())) or {
+            name.casefold() for name in completed_course_names
+        }
+        conflicting_status_names = set((history_facts or {}).get("conflicting_names", set()))
+        if not history_facts:
+            conflicting_status_names = set(pending_display_by_name) & completed_names
+        pending_names = set(pending_display_by_name) - completed_names
+        unmatched_pending_names = pending_names - set(catalog_by_name) - conflicting_status_names
+        eligible_pending_names = pending_names & set(catalog_by_name) - completed_names
         cohort_limitations = []
         if total_colleagues <= 0:
             cohort_limitations.append("Нет подтвержденной когорты коллег по сочетанию должность + ИОГВ.")
         elif "общегородской" in cohort_note.lower() or "смежной" in cohort_note.lower():
             cohort_limitations.append("Использован расширенный бенчмарк вместо точной пары должность + ИОГВ.")
+
+        duplicate_count = int((history_facts or {}).get("duplicate_count", 0) or 0)
+        if duplicate_count:
+            cohort_limitations.append(
+                f"В истории объединены точные дубли записей — {duplicate_count}; они не влияют повторно на рекомендации."
+            )
+        unknown_statuses = list((history_facts or {}).get("unknown_statuses", []))
+        if unknown_statuses:
+            unknown_details = ", ".join(
+                f"«{item.get('course_name', '')}» ({item.get('status') or 'пустой статус'})"
+                for item in unknown_statuses
+            )
+            cohort_limitations.append(
+                "Записи с неизвестным статусом не использованы как непройденные программы: " + unknown_details + "."
+            )
         
-        stages = ai_result.get("stages", [])
+        raw_stages = ai_result.get("stages", [])
+        stages = raw_stages if isinstance(raw_stages, list) else []
         seen_in_trajectory = set()
         cleaned_courses = []
         validation_degraded = False
@@ -767,6 +884,8 @@ class AgentManager:
         excess_count = 0
         if (
             len(stages) != 1
+            or not stages
+            or not isinstance(stages[0], dict)
             or stages[0].get("recommended_period")
             or stages[0].get("stage_goal")
         ):
@@ -774,105 +893,181 @@ class AgentManager:
             cohort_limitations.append(
                 "Этапность, сроки и зависимости модели отклонены: во входных данных нет календаря и подтвержденных пререквизитов."
             )
-        
-        for stage in stages:
-            for course in stage.get("courses", []):
-                c_name = course.get("course_name", "").strip()
-                c_id = str(course.get("course_id", "")).strip()
-                if not c_name and not c_id:
-                    continue
-                
-                # ID является канонической связью с каталогом; имя оставлено для
-                # обратной совместимости с провайдерами, которые пока его не возвращают.
-                catalog_item = catalog_by_id.get(c_id.casefold()) if c_id else None
-                if catalog_item is None and c_name:
-                    catalog_item = catalog_by_name.get(c_name.lower())
-                if not catalog_item:
+
+        def accept_course(course: Dict[str, Any], *, from_model: bool) -> None:
+            nonlocal validation_degraded, missing_catalog_count, unsupported_count, excess_count
+            c_name = str(course.get("course_name", "")).strip()
+            c_id = str(course.get("course_id", "")).strip()
+            if not c_name and not c_id:
+                return
+
+            # ID is canonical; exact name matching remains for provider compatibility.
+            catalog_item = catalog_by_id.get(c_id.casefold()) if c_id else None
+            if catalog_item is None and c_name:
+                catalog_item = catalog_by_name.get(c_name.casefold())
+            if not catalog_item:
+                if from_model:
                     validation_degraded = True
                     missing_catalog_count += 1
-                    continue
+                return
 
-                canonical_name = str(catalog_item.get("name", c_name)).strip()
-                canonical_key = canonical_name.casefold()
-                if canonical_key in completed_course_names or canonical_key in seen_in_trajectory:
-                    continue
-                seen_in_trajectory.add(canonical_key)
-                            
-                duration_hours = catalog_item.get("duration_hours", 0)
-                course_type = catalog_item.get("type", "")
-                category = catalog_item.get("category", "")
-                competencies = catalog_item.get("competencies", [])
-                annotation = catalog_item.get("annotation", "")
-                learning_outcomes = catalog_item.get("results", "")
+            canonical_name = str(catalog_item.get("name", c_name)).strip()
+            canonical_key = canonical_name.casefold()
+            if canonical_key in completed_names or canonical_key in seen_in_trajectory:
+                return
 
-                benchmark_match = top_colleague_names.get(catalog_item.get("name", c_name).lower())
-                goal_match = self._course_matches_goal(catalog_item, career_goal)
-                if not goal_match and not benchmark_match:
+            benchmark_match = top_colleague_names.get(canonical_key)
+            goal_match = self._course_matches_goal(catalog_item, career_goal)
+            pending_match = canonical_key in pending_names
+            if not goal_match and not benchmark_match and not pending_match:
+                if from_model:
                     validation_degraded = True
                     unsupported_count += 1
-                    continue
+                return
 
-                if len(cleaned_courses) >= 3:
+            if len(cleaned_courses) >= self.MAX_RECOMMENDED_COURSES:
+                if from_model:
                     validation_degraded = True
                     excess_count += 1
-                    continue
+                return
+            seen_in_trajectory.add(canonical_key)
 
-                course_sources = [f"Каталог 2025: {catalog_item.get('id', c_name)}"]
-                justification_parts = []
-                if goal_match:
-                    course_sources.insert(0, f"Заявленная цель: {career_goal}")
-                    justification_parts.append(
-                        f"Карточка программы содержит термины, совпадающие с заявленной целью «{career_goal}»."
-                    )
-                if benchmark_match:
-                    course_sources.append(cohort_note)
-                    popularity = benchmark_match.get("popularity_pct")
-                    success_rate = benchmark_match.get("success_rate")
-                    cohort_facts = []
-                    if isinstance(popularity, (int, float)):
-                        cohort_facts.append(f"популярность {popularity:g}%")
-                    if isinstance(success_rate, (int, float)):
-                        cohort_facts.append(f"успешность {success_rate:g}%")
-                    justification_parts.append(
-                        "Программа присутствует в подтвержденном когортном срезе"
-                        + (f" ({', '.join(cohort_facts)})" if cohort_facts else "")
-                        + "."
-                    )
-                justification = " ".join(justification_parts)
-                course_limitations = list(cohort_limitations)
-                    
-                cleaned_courses.append({
+            course_sources = [f"Каталог 2025: {catalog_item.get('id', c_name)}"]
+            justification_parts = []
+            if goal_match:
+                course_sources.insert(0, f"Заявленная цель: {career_goal}")
+                justification_parts.append(
+                    f"Карточка программы содержит термины, совпадающие с заявленной целью «{career_goal}»."
+                )
+            if benchmark_match:
+                course_sources.append(cohort_note)
+                popularity = benchmark_match.get("popularity_pct")
+                success_rate = benchmark_match.get("success_rate")
+                cohort_values = []
+                if isinstance(popularity, (int, float)):
+                    cohort_values.append(f"популярность {popularity:g}%")
+                if isinstance(success_rate, (int, float)):
+                    cohort_values.append(f"успешность {success_rate:g}%")
+                justification_parts.append(
+                    "Программа присутствует в подтвержденном когортном срезе"
+                    + (f" ({', '.join(cohort_values)})" if cohort_values else "") + "."
+                )
+            if pending_match:
+                course_sources.append("История обучения: программа имеет статус «Не пройден»")
+                justification_parts.append(
+                    "Программа присутствует в исходной истории со статусом «Не пройден» и сохранена как кандидат для завершения."
+                )
+
+            cleaned_courses.append({
+                "course_id": catalog_item.get("id", ""),
+                "course_name": canonical_name,
+                "type": catalog_item.get("type", ""),
+                "category": catalog_item.get("category", ""),
+                "duration_hours": catalog_item.get("duration_hours", 0),
+                "competencies": catalog_item.get("competencies", []),
+                "annotation": catalog_item.get("annotation", ""),
+                "learning_outcomes": catalog_item.get("results", ""),
+                "justification": " ".join(justification_parts),
+                "evidence_sources": course_sources,
+                "cohort_evidence": benchmark_match or None,
+                "limitations": list(cohort_limitations),
+                "priority": "",
+                "status": "Рекомендован",
+            })
+
+        # First validate only what the model actually returned. This keeps model
+        # rejection diagnostics separate from deterministic server completion.
+        for stage in stages:
+            if not isinstance(stage, dict):
+                validation_degraded = True
+                continue
+            courses = stage.get("courses", [])
+            if not isinstance(courses, list):
+                validation_degraded = True
+                continue
+            for course in courses:
+                if isinstance(course, dict):
+                    accept_course(course, from_model=True)
+
+        # Fill remaining slots only with exact pending/catalog matches. These are
+        # server-selected candidates and must not be counted as excess model output.
+        for catalog_item in ranked_catalog:
+            if len(cleaned_courses) >= self.MAX_RECOMMENDED_COURSES:
+                break
+            canonical_key = str(catalog_item.get("name", "")).casefold()
+            if canonical_key in eligible_pending_names and canonical_key not in seen_in_trajectory:
+                accept_course({
                     "course_id": catalog_item.get("id", ""),
-                    "course_name": catalog_item.get("name", c_name),
-                    "type": course_type,
-                    "category": category,
-                    "duration_hours": duration_hours,
-                    "competencies": competencies,
-                    "annotation": annotation,
-                    "learning_outcomes": learning_outcomes,
-                    "justification": justification,
-                    "evidence_sources": course_sources,
-                    "cohort_evidence": benchmark_match or None,
-                    "limitations": course_limitations,
-                    "priority": "",
-                    "status": "Рекомендован"
-                })
+                    "course_name": catalog_item.get("name", ""),
+                }, from_model=False)
 
         if missing_catalog_count:
             cohort_limitations.append(
-                f"Часть ответа модели отклонена: {missing_catalog_count} программ отсутствуют в официальном каталоге 2025 года."
+                "Часть ответа модели отклонена: количество программ вне официального каталога 2025 года — "
+                f"{missing_catalog_count}."
             )
         if unsupported_count:
             cohort_limitations.append(
-                f"Часть ответа модели отклонена: для {unsupported_count} программ не найдена проверяемая связь с заявленной целью или когортой."
+                "Часть ответа модели отклонена: количество программ без проверяемой связи с заявленной целью, "
+                f"непройденной историей или когортой — {unsupported_count}."
             )
         if excess_count:
             cohort_limitations.append(
-                f"Часть ответа модели отклонена: {excess_count} программ превышают лимит из 3 кандидатов."
+                "Часть ответа модели отклонена: количество программ сверх лимита из "
+                f"{self.MAX_RECOMMENDED_COURSES} кандидатов — {excess_count}."
+            )
+
+        if conflicting_status_names:
+            conflicts = ", ".join(
+                f"«{pending_display_by_name[name]}»" for name in sorted(conflicting_status_names)
+            )
+            cohort_limitations.append(
+                "В истории найдены противоречивые статусы «Пройден» и «Не пройден». "
+                f"Статус «Пройден» имеет приоритет, поэтому программы исключены: {conflicts}."
+            )
+
+        if unmatched_pending_names:
+            unmatched = ", ".join(
+                f"«{pending_display_by_name[name]}»" for name in sorted(unmatched_pending_names)
+            )
+            cohort_limitations.append(
+                "Непройденные программы не найдены в официальном каталоге 2025 года и не рекомендованы: "
+                f"{unmatched}."
+            )
+
+        selected_names = {course["course_name"].casefold() for course in cleaned_courses}
+        omitted_pending_names = eligible_pending_names - selected_names
+        if omitted_pending_names:
+            omitted = ", ".join(
+                f"«{pending_display_by_name[name]}»" for name in sorted(omitted_pending_names)
+            )
+            reason = (
+                f"из-за лимита из {self.MAX_RECOMMENDED_COURSES} кандидатов"
+                if len(cleaned_courses) >= self.MAX_RECOMMENDED_COURSES
+                else "по результатам проверяемого отбора"
+            )
+            cohort_limitations.append(
+                f"Подтвержденные непройденные программы не включены {reason}: {omitted}."
             )
 
         if not cleaned_courses:
             validation_degraded = True
+            available_signals = []
+            if career_goal.strip():
+                available_signals.append("заявленная цель")
+            if pending_names:
+                available_signals.append("непройденные программы")
+            if total_colleagues > 0:
+                available_signals.append("когортный срез")
+            if available_signals and not conflicting_status_names and not unmatched_pending_names:
+                cohort_limitations.append(
+                    "Подтвержденные основания не дали совпадений с непройденными программами официального каталога."
+                )
+            else:
+                cohort_limitations.append(
+                    "Рекомендации не сформированы: цель развития не указана, подтвержденная когорта отсутствует, "
+                    "а непройденные программы из официального каталога в истории не найдены."
+                )
 
         cleaned_stages = [{
             "stage_number": 1,
@@ -893,15 +1088,31 @@ class AgentManager:
         else:
             trajectory_limitations.append("Матрица компетенций не построена: входные данные не содержат подтвержденных измерений.")
             
+        if cleaned_courses:
+            used_sources = []
+            if career_goal.strip():
+                used_sources.append("заявленная цель")
+            if any(course["course_name"].casefold() in pending_names for course in cleaned_courses):
+                used_sources.append("непройденные программы истории обучения")
+            if any(course.get("cohort_evidence") for course in cleaned_courses):
+                used_sources.append("подтвержденный когортный срез")
+            source_text = ", ".join(used_sources) or "проверяемые входные данные"
+            summary = (
+                f"Сформировано кандидатов из официального каталога: {len(cleaned_courses)}. "
+                f"Использованные основания: {source_text}."
+            )
+        else:
+            summary = (
+                "Рекомендации не сформированы: во входных данных недостаточно подтвержденных оснований "
+                "для выбора непройденных программ из официального каталога."
+            )
+
         return {
             "trajectory_id": ai_result.get("trajectory_id", f"traj_{fio.replace(' ', '_')}"),
             "employee_name": fio,
             "position": position,
             "department": department,
-            "summary": (
-                f"Сформировано кандидатов из официального каталога: {len(cleaned_courses)}. "
-                "Отбор основан только на заявленной цели, истории обучения и доступном когортном срезе."
-            ),
+            "summary": summary,
             "stages": cleaned_stages,
             "competency_radar": radar,
             "limitations": trajectory_limitations,
@@ -997,19 +1208,20 @@ class AgentManager:
             if not fio or not position or not department:
                 raise ValueError("employee fio, position and department are required")
             learning_history = emp.get("learning_history", [])
-            
-            completed_course_names = set()
-            for h in learning_history:
-                st = str(h.get("status", "")).strip().lower()
-                c_name = str(h.get("course_name", "")).strip()
-                if st in ["пройден", "passed", "успешно", "done"] and c_name:
-                    completed_course_names.add(c_name.lower())
+            history_facts = self._classify_learning_history(learning_history)
+            completed_course_names = set(history_facts["completed_names"])
+            pending_course_names = {
+                history_facts["pending_display"][name]
+                for name in history_facts["pending_names"]
+            }
                     
             cohort_bench = self._find_cohort_benchmark(position, department)
             pop_dict = cohort_bench.get("courses", {})
             
             avail = [c for c in self.catalog if c["name"].lower() not in completed_course_names]
-            ranked = self._rank_catalog_candidates(avail, career_goal, position, department, pop_dict)
+            ranked = self._rank_catalog_candidates(
+                avail, career_goal, position, department, pop_dict, pending_course_names
+            )
 
             candidates = []
             for course in ranked:
@@ -1017,9 +1229,12 @@ class AgentManager:
                 has_exact_cohort_match = course.get("name", "").casefold() in {
                     name.casefold() for name in pop_dict
                 }
-                if has_goal_match or has_exact_cohort_match:
+                has_pending_match = course.get("name", "").casefold() in {
+                    name.casefold() for name in pending_course_names
+                }
+                if has_goal_match or has_exact_cohort_match or has_pending_match:
                     candidates.append(course)
-                if len(candidates) == 6:
+                if len(candidates) == self.MAX_RECOMMENDED_COURSES:
                     break
             stages = [
                 {
@@ -1041,32 +1256,28 @@ class AgentManager:
                 for c in sorted(pop_dict.values(), key=lambda x: x.get("popularity_pct", 0), reverse=True)[:8]
             ]
             
-            traj = {
-                "trajectory_id": f"traj_det_{fio.replace(' ', '_')}",
-                "employee_name": fio,
-                "position": position,
-                "department": department,
-                "summary": "Резервная траектория сформирована детерминированным алгоритмом после сбоя LLM. Результат требует экспертной проверки перед использованием.",
-                "stages": stages,
-                "competency_radar": [],
-                "limitations": [
-                    "LLM-конвейер не завершился; использован детерминированный fallback.",
-                    "Матрица компетенций не рассчитана и скрыта.",
-                    "Результат не должен использоваться как экспертно подтвержденный без ручной проверки."
-                ],
-                "colleague_benchmark": {
-                    "total_colleagues_in_position": cohort_bench.get("total_employees", 0),
-                    "cohort_size": cohort_bench.get("total_employees", 0),
-                    "scope": {
-                        "position_and_department": "должность + ИОГВ",
-                        "position_wide": "должность",
-                    }.get(cohort_bench.get("cohort_type", "none"), ""),
-                    "cohort_note": cohort_bench.get("cohort_note", ""),
-                    "limitations": ["Fallback-результат: бенчмарк использован только как источник ранжирования."],
-                    "top_recommended_for_position": top_colleagues
-                }
-            }
-            metadata = self._generation_metadata(str(req_data.get("model_type", "unknown")), "degraded")
+            traj = self._enrich_and_validate_trajectory(
+                {"trajectory_id": f"traj_det_{fio.replace(' ', '_')}", "stages": stages},
+                fio,
+                position,
+                department,
+                career_goal,
+                completed_course_names,
+                top_colleagues,
+                cohort_bench.get("total_employees", 0),
+                cohort_bench.get("cohort_note", ""),
+                cohort_bench.get("cohort_type", "none"),
+                ranked,
+                pending_course_names,
+                history_facts,
+            )
+            traj["limitations"].extend([
+                "LLM-конвейер не завершился; использован детерминированный fallback.",
+                "Результат требует экспертной проверки перед использованием.",
+            ])
+            metadata = self._generation_metadata(
+                str(req_data.get("model_type", "unknown")), "degraded", "fallback"
+            )
             traj.update(metadata)
             
             return json.dumps({

@@ -110,6 +110,44 @@ try
         validator.ValidateEmployeeProfiles(blankTypeHeaderProfiles, maxProfiles: 500, requireCareerGoal: false).IsValid,
         "An uploaded registry must be validated as a complete file without requiring per-employee UI fields");
 
+    var officialMultiSheetXlsxPath = Path.Combine(testRoot, "official-multi-sheet-registry.xlsx");
+    CreateMinimalMultiSheetXlsx(
+        officialMultiSheetXlsxPath,
+        [
+            ("ИОГВ", (IReadOnlyList<IReadOnlyList<string>>)
+            [
+                ["1", "Администрация Губернатора"],
+                ["2", "Администрация Адмиралтейского района Санкт-Петербурга"]
+            ]),
+            ("Список", (IReadOnlyList<IReadOnlyList<string>>)
+            [
+                ["ФИО", "Должность", "ИОГВ", "Курс", "Статус"],
+                ["Пользователь 1", "Главный специалист", "Администрация Губернатора", "Управление конфликтами", "Не пройден"],
+                ["Пользователь 1", "Главный специалист", "Администрация Губернатора", "2025_03_14-2025_04_10_Управление государственными и муниципальными закупками (120)(ГЗ)(ОДО)", "Пройден"],
+                ["Пользователь 1", "Главный специалист", "Администрация Губернатора", "2024_04_02-2024_06_19_Подготовка экспертов команд изменений исполнительных органов государственной власти Санкт-Петербурга (ГЗ(ОДО)", "Пройден"],
+                ["Пользователь 1", "Главный специалист", "Администрация Губернатора", "2025_01_01_Неизвестный курс (официальное название)", "Пройден"]
+            ]),
+            ("Буфер", (IReadOnlyList<IReadOnlyList<string>>)[[""]])
+        ]);
+    Assert(
+        validator.ValidateFiles([officialMultiSheetXlsxPath]).IsValid,
+        "The official workbook must pass file validation when its registry headers are on a later sheet");
+    var officialProfiles = parser.ParseHistoryFiles([officialMultiSheetXlsxPath]);
+    Assert(officialProfiles.Count == 1, "The official workbook must be parsed from its data sheet, not only from the first reference sheet");
+    Assert(officialProfiles[0].LearningHistory.Count == 4, "Every history row from the official data sheet must be preserved");
+    Assert(
+        officialProfiles[0].LearningHistory[1].CourseName == "Управление государственными и муниципальными закупками",
+        "Technical dates, duration and run markers must not become part of a course name");
+    Assert(
+        officialProfiles[0].LearningHistory[2].CourseName == "Подготовка экспертов команд изменений исполнительных органов государственной власти Санкт-Петербурга",
+        "Malformed run metadata from the official source must be removed safely");
+    Assert(
+        officialProfiles[0].LearningHistory[3].CourseName == "Неизвестный курс (официальное название)",
+        "Unknown parenthetical titles must be preserved when they cannot be grounded in the catalog");
+    Assert(
+        validator.ValidateEmployeeProfiles(officialProfiles, maxProfiles: 500, requireCareerGoal: false).IsValid,
+        "The official multi-sheet registry must pass upload profile validation");
+
     var unknownLayoutCsvPath = Path.Combine(testRoot, "unknown-layout.csv");
     await File.WriteAllTextAsync(
         unknownLayoutCsvPath,
@@ -181,7 +219,10 @@ try
           "total_profiles_processed": 15,
           "batch_selection_required": true,
           "batch_limit": 15,
+          "generation_mode": "llm",
           "quality_status": "verified",
+          "model_version": "Qwen3-1.7B-Q4_K_M.gguf",
+          "catalog_version": "2025:test",
           "courses_analysis": []
         }
         """;
@@ -190,6 +231,8 @@ try
     Assert(batchResult.TotalProfilesProcessed == 15, "Batch result must preserve total_profiles_processed");
     Assert(batchResult.BatchSelectionRequired == true, "Batch result must preserve batch_selection_required");
     Assert(batchResult.BatchLimit == 15, "Batch result must preserve batch_limit");
+    Assert(batchResult.GenerationMode == "llm", "Batch result must preserve the actual generation mode independently of quality status");
+    Assert(batchResult.ModelVersion == "Qwen3-1.7B-Q4_K_M.gguf", "Batch result must preserve the local model version");
 
     var secondProfile = new EmployeeProfileDto
     {
@@ -430,6 +473,73 @@ static void CreateMinimalXlsx(string path, IReadOnlyList<IReadOnlyList<string>> 
     }
     sheet.Append("</sheetData></worksheet>");
     WriteEntry(archive, "xl/worksheets/sheet1.xml", sheet.ToString());
+}
+
+static void CreateMinimalMultiSheetXlsx(
+    string path,
+    IReadOnlyList<(string Name, IReadOnlyList<IReadOnlyList<string>> Rows)> worksheets)
+{
+    using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
+    var overrides = string.Join(
+        "",
+        Enumerable.Range(1, worksheets.Count)
+            .Select(index => $"<Override PartName=\"/xl/worksheets/sheet{index}.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"));
+    WriteEntry(archive, "[Content_Types].xml", $"""
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+          <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+          <Default Extension="xml" ContentType="application/xml"/>
+          <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+          {overrides}
+        </Types>
+        """);
+    WriteEntry(archive, "_rels/.rels", """
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+        </Relationships>
+        """);
+
+    var sheetDefinitions = string.Join(
+        "",
+        worksheets.Select((worksheet, index) =>
+            $"<sheet name=\"{SecurityElement.Escape(worksheet.Name)}\" sheetId=\"{index + 1}\" r:id=\"rId{index + 1}\"/>"));
+    WriteEntry(archive, "xl/workbook.xml", $"""
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+          <sheets>{sheetDefinitions}</sheets>
+        </workbook>
+        """);
+
+    var relationships = string.Join(
+        "",
+        Enumerable.Range(1, worksheets.Count).Select(index =>
+            $"<Relationship Id=\"rId{index}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet{index}.xml\"/>"));
+    WriteEntry(archive, "xl/_rels/workbook.xml.rels", $"""
+        <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          {relationships}
+        </Relationships>
+        """);
+
+    for (var sheetIndex = 0; sheetIndex < worksheets.Count; sheetIndex++)
+    {
+        var rows = worksheets[sheetIndex].Rows;
+        var sheet = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>");
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            sheet.Append($"<row r=\"{rowIndex + 1}\">");
+            for (var columnIndex = 0; columnIndex < rows[rowIndex].Count; columnIndex++)
+            {
+                var reference = $"{ColumnName(columnIndex)}{rowIndex + 1}";
+                var value = SecurityElement.Escape(rows[rowIndex][columnIndex]) ?? string.Empty;
+                sheet.Append($"<c r=\"{reference}\" t=\"inlineStr\"><is><t>{value}</t></is></c>");
+            }
+            sheet.Append("</row>");
+        }
+        sheet.Append("</sheetData></worksheet>");
+        WriteEntry(archive, $"xl/worksheets/sheet{sheetIndex + 1}.xml", sheet.ToString());
+    }
 }
 
 static string ColumnName(int zeroBasedIndex)

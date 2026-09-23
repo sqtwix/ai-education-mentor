@@ -198,6 +198,209 @@ class AgentManagerFallbackTests(unittest.TestCase):
         self.assertEqual(progress["stage"], "completed")
         self.assertEqual(progress["percent"], 100)
 
+    def test_registry_profile_keeps_exact_not_completed_catalog_course_as_candidate(self):
+        pending_course = self.manager.catalog[0]
+        payload = json.dumps(
+            {
+                "request_id": "registry-without-goal",
+                "model_type": "deepseek",
+                "employee": {
+                    "fio": "Пользователь 1",
+                    "position": "Главный специалист",
+                    "department": "Администрация Губернатора",
+                    "career_goal": "",
+                    "learning_history": [
+                        {
+                            "course_name": pending_course["name"],
+                            "course_type": pending_course["type"],
+                            "status": "Не пройден",
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        result = json.loads(self.manager.start_deepseek_processing(payload))
+        courses = result["trajectory"]["stages"][0]["courses"]
+
+        self.assertEqual([course["course_name"] for course in courses], [pending_course["name"]])
+        self.assertTrue(any("История обучения" in source for source in courses[0]["evidence_sources"]))
+
+    def test_registry_profile_without_grounded_signal_returns_honest_empty_result(self):
+        completed_course = self.manager.catalog[0]
+        payload = json.dumps(
+            {
+                "request_id": "registry-without-signal",
+                "model_type": "deepseek",
+                "employee": {
+                    "fio": "Пользователь 2",
+                    "position": "Заместитель руководителя",
+                    "department": "Администрация Губернатора",
+                    "career_goal": "",
+                    "learning_history": [
+                        {
+                            "course_name": completed_course["name"],
+                            "course_type": completed_course["type"],
+                            "status": "Пройден",
+                        }
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        result = json.loads(self.manager.start_deepseek_processing(payload))
+        trajectory = result["trajectory"]
+
+        self.assertEqual(trajectory["stages"][0]["courses"], [])
+        self.assertIn("недостаточно подтвержденных оснований", trajectory["summary"])
+        self.assertTrue(any("цель развития не указана" in item for item in trajectory["limitations"]))
+        self.assertNotIn("Отбор основан", trajectory["summary"])
+
+    def test_conflicting_history_status_prefers_completed_and_explains_exclusion(self):
+        course = self.manager.catalog[0]
+        payload = json.dumps({
+            "request_id": "conflicting-history-status",
+            "model_type": "deepseek",
+            "employee": {
+                "fio": "Пограничный профиль",
+                "position": "Начальник отдела",
+                "department": "Тестовое ведомство",
+                "career_goal": "",
+                "learning_history": [
+                    {"course_name": course["name"], "status": "Пройден"},
+                    {"course_name": course["name"], "status": "Не пройден"},
+                ],
+            },
+        }, ensure_ascii=False)
+
+        trajectory = json.loads(self.manager.start_deepseek_processing(payload))["trajectory"]
+
+        self.assertEqual(trajectory["stages"][0]["courses"], [])
+        self.assertTrue(any("противоречивые статусы" in item for item in trajectory["limitations"]))
+        self.assertTrue(any("«Пройден» имеет приоритет" in item for item in trajectory["limitations"]))
+
+    def test_unknown_pending_course_is_not_substituted_and_is_reported(self):
+        payload = json.dumps({
+            "request_id": "unknown-pending-course",
+            "model_type": "deepseek",
+            "employee": {
+                "fio": "Пограничный профиль",
+                "position": "Специалист",
+                "department": "Тестовое ведомство",
+                "career_goal": "",
+                "learning_history": [
+                    {"course_name": "Несуществующая программа из истории", "status": "Не пройден"},
+                ],
+            },
+        }, ensure_ascii=False)
+
+        trajectory = json.loads(self.manager.start_deepseek_processing(payload))["trajectory"]
+
+        self.assertEqual(trajectory["stages"][0]["courses"], [])
+        self.assertTrue(any("не найдены в официальном каталоге" in item for item in trajectory["limitations"]))
+        self.assertTrue(any("Несуществующая программа" in item for item in trajectory["limitations"]))
+
+    def test_more_than_three_pending_catalog_courses_reports_omitted_candidates(self):
+        courses = self.manager.catalog[:4]
+        payload = json.dumps({
+            "request_id": "pending-course-limit",
+            "model_type": "deepseek",
+            "employee": {
+                "fio": "Пограничный профиль",
+                "position": "Специалист",
+                "department": "Тестовое ведомство",
+                "career_goal": "",
+                "learning_history": [
+                    {"course_name": course["name"], "status": "Не пройден"}
+                    for course in courses
+                ],
+            },
+        }, ensure_ascii=False)
+
+        trajectory = json.loads(self.manager.start_deepseek_processing(payload))["trajectory"]
+
+        self.assertEqual(len(trajectory["stages"][0]["courses"]), 3)
+        self.assertTrue(any("лимита из 3 кандидатов" in item for item in trajectory["limitations"]))
+        self.assertFalse(any("сверх лимита" in item for item in trajectory["limitations"]))
+
+    def test_unknown_status_is_not_treated_as_pending(self):
+        course = self.manager.catalog[0]
+        payload = json.dumps({
+            "request_id": "unknown-history-status",
+            "model_type": "deepseek",
+            "employee": {
+                "fio": "Пограничный профиль",
+                "position": "Специалист",
+                "department": "Тестовое ведомство",
+                "career_goal": "",
+                "learning_history": [
+                    {"course_name": course["name"], "status": "Ожидает уточнения"},
+                ],
+            },
+        }, ensure_ascii=False)
+
+        trajectory = json.loads(self.manager.start_deepseek_processing(payload))["trajectory"]
+
+        self.assertEqual(trajectory["stages"][0]["courses"], [])
+        self.assertTrue(any("неизвестным статусом" in item for item in trajectory["limitations"]))
+        self.assertTrue(any("Ожидает уточнения" in item for item in trajectory["limitations"]))
+
+    def test_exact_duplicate_history_rows_are_deduplicated_and_reported(self):
+        course = self.manager.catalog[0]
+        duplicate_row = {"course_name": course["name"], "course_type": course["type"], "status": "Не пройден"}
+        payload = json.dumps({
+            "request_id": "duplicate-history-rows",
+            "model_type": "deepseek",
+            "employee": {
+                "fio": "Пограничный профиль",
+                "position": "Специалист",
+                "department": "Тестовое ведомство",
+                "career_goal": "",
+                "learning_history": [duplicate_row, dict(duplicate_row)],
+            },
+        }, ensure_ascii=False)
+
+        trajectory = json.loads(self.manager.start_deepseek_processing(payload))["trajectory"]
+        courses = trajectory["stages"][0]["courses"]
+
+        self.assertEqual([item["course_name"] for item in courses], [course["name"]])
+        self.assertTrue(any("точные дубли" in item for item in trajectory["limitations"]))
+
+    def test_partial_model_selection_is_filled_from_exact_pending_history(self):
+        courses = self.manager.catalog[:4]
+        trajectory = self.manager._enrich_and_validate_trajectory(
+            {
+                "stages": [{
+                    "courses": [
+                        {"course_id": course["id"], "course_name": course["name"]}
+                        for course in courses[:2]
+                    ]
+                }]
+            },
+            "Пограничный профиль",
+            "Специалист",
+            "Тестовое ведомство",
+            "",
+            set(),
+            [],
+            0,
+            "Минимальный размер когорты не настроен",
+            "none",
+            courses,
+            {course["name"] for course in courses},
+        )
+
+        selected = trajectory["stages"][0]["courses"]
+
+        self.assertEqual(len(selected), 3)
+        self.assertEqual(
+            {course["course_name"] for course in selected},
+            {course["name"] for course in courses[:3]},
+        )
+        self.assertTrue(any("лимита из 3 кандидатов" in item for item in trajectory["limitations"]))
+
     def test_llm_course_outside_catalog_is_rejected(self):
         source_manager = AgentManager(FailingAgentFactory())
         official_course = source_manager.catalog[0]
@@ -218,6 +421,7 @@ class AgentManagerFallbackTests(unittest.TestCase):
         courses = result["trajectory"]["stages"][0]["courses"]
 
         self.assertEqual(result["quality_status"], "degraded")
+        self.assertEqual(result["generation_mode"], "llm")
         self.assertEqual([course["course_name"] for course in courses], [official_course["name"]])
         self.assertTrue(any("отклонен" in item for item in result["trajectory"]["limitations"]))
         self.assertTrue(courses[0]["evidence_sources"])
@@ -305,7 +509,7 @@ class AgentManagerFallbackTests(unittest.TestCase):
 
         self.assertEqual(courses, [])
         self.assertEqual(result["quality_status"], "degraded")
-        self.assertTrue(any("проверяемая связь" in item for item in result["trajectory"]["limitations"]))
+        self.assertTrue(any("без проверяемой связи" in item for item in result["trajectory"]["limitations"]))
 
     def test_goal_matching_ignores_generic_government_context(self):
         exact = next(

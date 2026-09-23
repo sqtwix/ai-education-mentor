@@ -11,21 +11,33 @@ public class FileParser
 {
     public static List<List<string>> ReadExcelRows(string filePath)
     {
+        return ReadExcelWorksheets(filePath).FirstOrDefault() ?? new List<List<string>>();
+    }
+
+    public static List<List<List<string>>> ReadExcelWorksheets(string filePath)
+    {
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
-        var rows = new List<List<string>>();
+        var worksheets = new List<List<List<string>>>();
         using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         using var reader = ExcelReaderFactory.CreateReader(stream);
-        while (reader.Read())
+        do
         {
-            var row = new List<string>();
-            for (int i = 0; i < reader.FieldCount; i++)
+            var rows = new List<List<string>>();
+            while (reader.Read())
             {
-                var val = reader.GetValue(i);
-                row.Add(val?.ToString() ?? "");
+                var row = new List<string>();
+                for (int i = 0; i < reader.FieldCount; i++)
+                {
+                    var val = reader.GetValue(i);
+                    row.Add(val?.ToString() ?? "");
+                }
+                rows.Add(row);
             }
-            rows.Add(row);
+            worksheets.Add(rows);
         }
-        return rows;
+        while (reader.NextResult());
+
+        return worksheets;
     }
 
     public List<EmployeeProfileDto> ParseHistoryFiles(List<string> filePaths)
@@ -59,7 +71,20 @@ public class FileParser
                 ParseFile(path, usersMap);
             }
 
-            return usersMap.Values.ToList();
+            var canonicalCourseNames = GetDefaultCatalog()
+                .Select(item => item.Name?.Trim() ?? string.Empty)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+            var profiles = usersMap.Values.ToList();
+            foreach (var profile in profiles)
+            {
+                foreach (var item in profile.LearningHistory ?? [])
+                {
+                    item.CourseName = ResolveImportedCourseName(item.CourseName, canonicalCourseNames);
+                }
+            }
+            return profiles;
         }
         finally
         {
@@ -118,14 +143,26 @@ public class FileParser
             return;
         }
 
-        List<List<string>> rows;
-        if (ext == ".xlsx" || ext == ".xls") rows = ReadExcelRows(path);
-        else if (ext == ".csv") rows = ReadCsvRows(path);
-        else return;
+        var tables = ext switch
+        {
+            ".xlsx" or ".xls" => ReadExcelWorksheets(path),
+            ".csv" => [ReadCsvRows(path)],
+            _ => []
+        };
 
+        foreach (var rows in tables)
+        {
+            ParseTabularRows(rows, usersMap);
+        }
+    }
+
+    private static void ParseTabularRows(List<List<string>> rows, Dictionary<string, EmployeeProfileDto> usersMap)
+    {
         if (rows.Count < 2) return;
 
-            var headers = rows[0];
+        for (var headerRowIndex = 0; headerRowIndex < rows.Count - 1; headerRowIndex++)
+        {
+            var headers = rows[headerRowIndex];
             int fioIdx = FindColumnIndex(headers, new[] { "фио", "ф и о", "фамилия имя отчество", "пользователь", "служащий", "сотрудник", "имя сотрудника" });
             int posIdx = FindColumnIndex(headers, new[] { "должность", "наименование должности", "должность сотрудника", "позиция", "роль сотрудника" });
             int iogvIdx = FindColumnIndex(headers, new[] { "иогв", "наименование иогв", "ведомство", "орган власти", "организация", "подразделение" });
@@ -134,12 +171,18 @@ public class FileParser
             int statusIdx = FindColumnIndex(headers, new[] { "статус", "статус курса", "статус программы", "статус прохождения", "результат прохождения", "состояние обучения", "итог обучения" });
             int experienceIdx = FindColumnIndex(headers, new[] { "стаж", "стаж лет", "experience years", "опыт", "опыт лет" });
             int goalIdx = FindColumnIndex(headers, new[] { "цель обучения", "карьерная цель", "целевой вектор", "career goal" });
-            if (typeIdx < 0)
+
+            if (fioIdx < 0 || new[] { posIdx, iogvIdx, courseIdx, statusIdx, experienceIdx, goalIdx }.All(index => index < 0))
             {
-                typeIdx = InferCourseTypeColumn(rows, [fioIdx, posIdx, iogvIdx, courseIdx, statusIdx, experienceIdx, goalIdx]);
+                continue;
             }
 
-        for (int r = 1; r < rows.Count; r++)
+            if (typeIdx < 0)
+            {
+                typeIdx = InferCourseTypeColumn(rows.Skip(headerRowIndex).ToList(), [fioIdx, posIdx, iogvIdx, courseIdx, statusIdx, experienceIdx, goalIdx]);
+            }
+
+            for (int r = headerRowIndex + 1; r < rows.Count; r++)
             {
                 var row = rows[r];
                 if (row.Count == 0 || row.All(string.IsNullOrWhiteSpace)) continue;
@@ -186,12 +229,17 @@ public class FileParser
                         Status = status
                     });
                 }
+            }
+
+            // Один лист содержит одну таблицу профилей. После найденного
+            // заголовка не интерпретируем строки данных как новые заголовки.
+            return;
         }
     }
 
     public List<CourseCatalogItemDto> GetDefaultCatalog()
     {
-        var dataPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "courses_catalog.json");
+        var dataPath = ResolveDataPath("courses_catalog.json");
         if (File.Exists(dataPath))
         {
             var json = File.ReadAllText(dataPath, Encoding.UTF8);
@@ -202,7 +250,7 @@ public class FileParser
 
     public List<EmployeeProfileDto> GetDefaultUsersHistory()
     {
-        var dataPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "learning_history_dataset.json");
+        var dataPath = ResolveDataPath("learning_history_dataset.json");
         if (File.Exists(dataPath))
         {
             var json = File.ReadAllText(dataPath, Encoding.UTF8);
@@ -217,7 +265,7 @@ public class FileParser
 
     public Dictionary<string, object> GetDefaultBenchmarks()
     {
-        var dataPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "learning_history_dataset.json");
+        var dataPath = ResolveDataPath("learning_history_dataset.json");
         if (File.Exists(dataPath))
         {
             var json = File.ReadAllText(dataPath, Encoding.UTF8);
@@ -323,6 +371,63 @@ public class FileParser
     {
         var normalized = Regex.Replace(value.Trim().ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", " ");
         return Regex.Replace(normalized, @"\s+", " ").Trim();
+    }
+
+    private static string ResolveDataPath(string fileName)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(Directory.GetCurrentDirectory(), "Data", fileName),
+            Path.Combine(AppContext.BaseDirectory, "Data", fileName)
+        };
+        return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
+    }
+
+    private static string ResolveImportedCourseName(
+        string value,
+        IReadOnlyDictionary<string, string> canonicalCourseNames)
+    {
+        var normalized = Regex.Replace(value?.Trim() ?? string.Empty, @"\s+", " ").Trim();
+        if (string.IsNullOrEmpty(normalized)) return normalized;
+
+        // Export systems can prefix a title with one date or a date range.
+        var withoutPeriod = Regex.Replace(
+            normalized,
+            @"^\d{4}[_-]\d{2}[_-]\d{2}(?:-\d{4}[_-]\d{2}[_-]\d{2})?_+",
+            string.Empty);
+        var hadPeriodPrefix = !string.Equals(withoutPeriod, normalized, StringComparison.Ordinal);
+        normalized = withoutPeriod.Trim();
+
+        if (canonicalCourseNames.TryGetValue(normalized, out var exactName)) return exactName;
+
+        // Prefer the longest prefix that exactly resolves to the official
+        // catalog. This removes arbitrary launch metadata without maintaining
+        // a list of case-specific marker names and preserves official brackets.
+        var parenthesisIndexes = normalized
+            .Select((character, index) => (character, index))
+            .Where(item => item.character == '(')
+            .Select(item => item.index)
+            .OrderByDescending(index => index);
+        foreach (var index in parenthesisIndexes)
+        {
+            var candidate = normalized[..index].TrimEnd();
+            if (canonicalCourseNames.TryGetValue(candidate, out var canonicalName)) return canonicalName;
+        }
+
+        // Unknown titles are preserved. Only an obviously compact trailing
+        // export token is removed, and only when the same value had a date
+        // prefix proving that it came from a launch-oriented export field.
+        if (hadPeriodPrefix)
+        {
+            var compactSuffix = Regex.Match(normalized, @"\s*\(([^\s]{1,48})$");
+            if (compactSuffix.Success)
+            {
+                normalized = normalized[..compactSuffix.Index].TrimEnd();
+                normalized = Regex.Replace(normalized, @"\s*\(\d{1,4}\)\s*$", string.Empty).TrimEnd();
+            }
+        }
+
+        return normalized;
     }
 
     private static string GetValueSafely(List<string> row, int index)

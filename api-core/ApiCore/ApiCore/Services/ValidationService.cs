@@ -187,18 +187,25 @@ public class ValidationService
                     using var workbookArchive = ZipFile.OpenRead(filePath);
                     if (!ValidateArchiveLimits(workbookArchive, fileName, result)) return;
                 }
-                var rows = FileParser.ReadExcelRows(filePath);
-                if (rows.Count < 2)
+                var worksheets = FileParser.ReadExcelWorksheets(filePath);
+                if (!worksheets.Any(rows => rows.Count >= 2))
                 {
                     result.AddError($"Таблица '{fileName}' пуста или содержит только строку заголовков.");
                     return;
                 }
 
-                var headers = string.Join(" ", rows[0]).ToLowerInvariant();
-                bool isHistory = headers.Contains("фио") || headers.Contains("должност") || headers.Contains("курс") || headers.Contains("статус") || headers.Contains("пользователь");
-                bool isCatalog = headers.Contains("назван") || headers.Contains("аннотац") || headers.Contains("цел") || headers.Contains("результат");
+                var headerCandidates = worksheets
+                    .SelectMany(rows => rows.Take(Math.Min(rows.Count, 20)))
+                    .Select(row => string.Join(" ", row).ToLowerInvariant())
+                    .ToList();
+                bool isHistory = headerCandidates.Any(headers =>
+                    headers.Contains("фио") || headers.Contains("должност") || headers.Contains("курс") ||
+                    headers.Contains("статус") || headers.Contains("пользователь"));
+                bool isCatalog = headerCandidates.Any(headers =>
+                    headers.Contains("назван") || headers.Contains("аннотац") ||
+                    headers.Contains("цел") || headers.Contains("результат"));
 
-                if (!isHistory && !isCatalog && rows[0].Count < 3)
+                if (!isHistory && !isCatalog)
                 {
                     result.AddError($"В файле '{fileName}' не обнаружены стандартные заголовки реестра истории обучения (ФИО, Должность, Курс, Статус) или каталога программ (Название, Аннотация, Цель, Результаты).");
                 }

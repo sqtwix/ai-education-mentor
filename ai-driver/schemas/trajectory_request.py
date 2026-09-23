@@ -13,7 +13,11 @@ class EmployeeProfile(BaseModel):
     position: Annotated[str, Field(min_length=1, max_length=300)]
     department: Annotated[str, Field(min_length=1, max_length=300)]
     experience_years: Optional[Annotated[int, Field(ge=0, le=80)]] = None
-    career_goal: Annotated[str, Field(min_length=1, max_length=2000)]
+    # В официальном реестре истории обучения цель развития отсутствует.
+    # Ручной профиль по-прежнему требует её на уровне UI/API Core, а пакетная
+    # загрузка передаёт пустую строку и строит траекторию по должности,
+    # ведомству и подтверждённой истории без выдумывания цели.
+    career_goal: Annotated[str, Field(max_length=2000)]
     learning_history: List[CourseHistoryItem] = Field(default_factory=list, max_length=200)
 
 class CourseCatalogItem(BaseModel):

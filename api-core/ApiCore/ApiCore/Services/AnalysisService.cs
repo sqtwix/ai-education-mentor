@@ -140,14 +140,30 @@ public sealed class AnalysisService
             await _dbContext.SaveChangesAsync(cancellationToken);
         }
 
+        var generationModes = trajectories
+            .Select(trajectory => GetStringProperty(trajectory, "generation_mode"))
+            .Where(mode => !string.IsNullOrWhiteSpace(mode))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var batchGenerationMode = generationModes.Count switch
+        {
+            0 => "unknown",
+            1 => generationModes[0],
+            _ => "mixed"
+        };
+        var firstTrajectory = trajectories.FirstOrDefault();
+
         var combinedResult = new
         {
             batch_id = report.Id,
             total_profiles_processed = trajectories.Count,
             batch_selection_required = true,
             batch_limit = employees.Count,
-            generation_mode = degraded ? "fallback" : "llm",
+            generation_mode = batchGenerationMode,
             quality_status = degraded ? "degraded" : "verified",
+            model_version = GetStringProperty(firstTrajectory, "model_version"),
+            catalog_version = GetStringProperty(firstTrajectory, "catalog_version"),
+            generated_at = GetStringProperty(firstTrajectory, "generated_at"),
             trajectory = (object?)null,
             courses_analysis = trajectories
         };
@@ -243,6 +259,18 @@ public sealed class AnalysisService
         {
             throw new InvalidOperationException("Сервис ИИ вернул некорректную структуру траектории.");
         }
+    }
+
+    private static string GetStringProperty(JsonElement value, string propertyName)
+    {
+        if (value.ValueKind == JsonValueKind.Object &&
+            value.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.String)
+        {
+            return property.GetString() ?? string.Empty;
+        }
+
+        return string.Empty;
     }
 
     private static string GetEndpoint(string modelType) => modelType switch
