@@ -232,9 +232,7 @@ export async function generateTrajectory(employee, modelType = "deepseek", reque
 export async function uploadFiles(
   userResponseFiles,
   modelType = "deepseek",
-  requestId = "",
-  selectedFio = "",
-  careerGoal = ""
+  requestId = ""
 ) {
   const formData = new FormData();
   userResponseFiles.forEach((file) => {
@@ -242,8 +240,6 @@ export async function uploadFiles(
   });
   formData.append("modelType", modelType.toLowerCase());
   if (requestId) formData.append("requestId", requestId);
-  if (selectedFio.trim()) formData.append("selectedFio", selectedFio.trim());
-  if (careerGoal.trim()) formData.append("careerGoal", careerGoal.trim());
 
   return request("/analysis/upload", {
     method: "POST",

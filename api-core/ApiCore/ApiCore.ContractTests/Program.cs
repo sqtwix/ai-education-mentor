@@ -106,13 +106,9 @@ try
     Assert(blankTypeHeaderProfiles.Count == 1, "Registry layout with a blank course-type header must preserve the employee");
     Assert(blankTypeHeaderProfiles[0].LearningHistory.Select(item => item.CourseType).SequenceEqual(["ЭК", "ППК"]), "Known course types must be inferred from an unlabeled column");
 
-    var selectedRegistryProfiles = FileParser.SelectProfilesForAnalysis(
-        blankTypeHeaderProfiles,
-        "  пользователь   1 ",
-        "Развитие навыков проектного управления");
-    Assert(selectedRegistryProfiles.Count == 1, "Employee selection must ignore case and repeated spaces");
-    Assert(selectedRegistryProfiles[0].CareerGoal == "Развитие навыков проектного управления", "Uploaded career goal must be applied to the selected employee");
-    Assert(validator.ValidateEmployeeProfiles(selectedRegistryProfiles).IsValid, "Selected registry profile with an explicit goal must pass validation");
+    Assert(
+        validator.ValidateEmployeeProfiles(blankTypeHeaderProfiles, maxProfiles: 500, requireCareerGoal: false).IsValid,
+        "An uploaded registry must be validated as a complete file without requiring per-employee UI fields");
 
     var unknownLayoutCsvPath = Path.Combine(testRoot, "unknown-layout.csv");
     await File.WriteAllTextAsync(
@@ -132,6 +128,19 @@ try
         })
         .ToList();
     Assert(!validator.ValidateEmployeeProfiles(oversizedBatch).IsValid, "A batch larger than 15 profiles must be rejected");
+
+    var completeRegistry = Enumerable.Range(1, 323)
+        .Select(index => new EmployeeProfileDto
+        {
+            Fio = $"Профиль {index}",
+            Position = expected.Position,
+            Department = expected.Department,
+            LearningHistory = expected.LearningHistory
+        })
+        .ToList();
+    Assert(
+        validator.ValidateEmployeeProfiles(completeRegistry, maxProfiles: 500, requireCareerGoal: false).IsValid,
+        "A complete uploaded registry must pass without per-employee FIO selection or career-goal fields");
 
     var invalidProfile = new EmployeeProfileDto
     {

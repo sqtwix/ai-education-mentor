@@ -135,9 +135,7 @@ public class AnalysisController : ControllerBase
     public async Task<IActionResult> UploadFiles(
         [FromForm] List<IFormFile> userResponseFiles,
         [FromForm] string modelType = "deepseek",
-        [FromForm] string? requestId = null,
-        [FromForm] string? selectedFio = null,
-        [FromForm] string? careerGoal = null)
+        [FromForm] string? requestId = null)
     {
         if (userResponseFiles == null || !userResponseFiles.Any())
             return BadRequest(new { error = "Необходимо загрузить хотя бы один файл (.json, .xlsx, .xls, .csv или .zip)." });
@@ -150,14 +148,6 @@ public class AnalysisController : ControllerBase
         if (!TryNormalizeModelType(modelType, out var normalizedModelType))
         {
             return BadRequest(new { error = "Неизвестная модель. Допустимые значения: deepseek, sbergpt, local_llm." });
-        }
-        if (selectedFio?.Length > 200)
-        {
-            return BadRequest(new { error = "ФИО сотрудника не должно превышать 200 символов." });
-        }
-        if (careerGoal?.Length > 2000)
-        {
-            return BadRequest(new { error = "Цель обучения не должна превышать 2000 символов." });
         }
         var taskId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString() : requestId;
         if (taskId.Length > 128 || taskId.Any(character => !char.IsLetterOrDigit(character) && character is not '-' and not '_'))
@@ -216,24 +206,11 @@ public class AnalysisController : ControllerBase
             });
         }
 
-        var allParsedProfiles = _fileParser.ParseHistoryFiles(filePaths);
-        if (allParsedProfiles.Count > 15 && string.IsNullOrWhiteSpace(selectedFio))
-        {
-            return BadRequest(new
-            {
-                error = $"Файл содержит реестр из {allParsedProfiles.Count} сотрудников. Укажите ФИО одного сотрудника и цель обучения."
-            });
-        }
-
-        var parsedProfiles = FileParser.SelectProfilesForAnalysis(allParsedProfiles, selectedFio, careerGoal);
-        if (!string.IsNullOrWhiteSpace(selectedFio) && parsedProfiles.Count == 0)
-        {
-            return BadRequest(new
-            {
-                error = $"Сотрудник «{selectedFio.Trim()}» не найден в загруженном реестре. Проверьте ФИО."
-            });
-        }
-        var profileValidation = _validationService.ValidateEmployeeProfiles(parsedProfiles);
+        var parsedProfiles = _fileParser.ParseHistoryFiles(filePaths);
+        var profileValidation = _validationService.ValidateEmployeeProfiles(
+            parsedProfiles,
+            maxProfiles: 500,
+            requireCareerGoal: false);
         if (!profileValidation.IsValid)
         {
             try { Directory.Delete(tempDir, true); } catch { /* ignore cleanup errors */ }

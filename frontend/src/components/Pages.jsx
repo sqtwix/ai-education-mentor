@@ -649,10 +649,7 @@ export function CourseReportDetailPage({
   const isDegraded = report.status === "CompletedWithLimitations"
     || report.result?.quality_status === "degraded"
     || trajectoryForRoadmap?.quality_status === "degraded";
-  const exportNeedsProfileSelection = batchSelectionRequired && selectedTrajectoryIndex === null;
-  const reportForExport = batchSelectionRequired && trajectoryForRoadmap
-    ? { ...report, result: { ...report.result, trajectory: trajectoryForRoadmap } }
-    : report;
+  const reportForExport = report;
 
   return (
     <section className="page active" id="report-detail" data-title="Детали отчёта">
@@ -717,7 +714,6 @@ export function CourseReportDetailPage({
             <button
               type="button"
               className="icon-action-button save-action"
-              disabled={exportNeedsProfileSelection}
               onClick={() => {
                 setIsProfileMenuOpen(false);
                 setIsSaveMenuOpen((isOpen) => !isOpen);
@@ -725,9 +721,7 @@ export function CourseReportDetailPage({
               aria-expanded={isSaveMenuOpen}
               aria-haspopup="menu"
               aria-label="Сохранить"
-              title={exportNeedsProfileSelection
-                  ? "Сначала выберите профиль"
-                  : "Сохранить"}
+              title="Сохранить весь отчет"
             >
               <Save size={18} strokeWidth={2.2} />
             </button>
@@ -765,7 +759,7 @@ export function CourseReportDetailPage({
             <p className="eyebrow">Batch-режим</p>
             <h3>Выберите профиль для просмотра траектории</h3>
             <p className="muted">
-              Ни один профиль не открывается автоматически: выбор определяет, какую траекторию показывать и экспортировать.
+              Выбор профиля меняет только просмотр на экране. При сохранении выгружается весь пакет.
             </p>
           </div>
           <div className="batch-selector-list">

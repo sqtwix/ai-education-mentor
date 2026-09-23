@@ -70,7 +70,10 @@ public class ValidationService
         return result;
     }
 
-    public ValidationResult ValidateEmployeeProfiles(List<EmployeeProfileDto> profiles, int maxProfiles = 15)
+    public ValidationResult ValidateEmployeeProfiles(
+        List<EmployeeProfileDto> profiles,
+        int maxProfiles = 15,
+        bool requireCareerGoal = true)
     {
         var result = new ValidationResult();
         if (profiles.Count == 0)
@@ -92,7 +95,7 @@ public class ValidationService
             if (string.IsNullOrWhiteSpace(profile.Fio)) missing.Add("ФИО");
             if (string.IsNullOrWhiteSpace(profile.Position)) missing.Add("должность");
             if (string.IsNullOrWhiteSpace(profile.Department)) missing.Add("ИОГВ");
-            if (string.IsNullOrWhiteSpace(profile.CareerGoal)) missing.Add("цель обучения");
+            if (requireCareerGoal && string.IsNullOrWhiteSpace(profile.CareerGoal)) missing.Add("цель обучения");
 
             if (missing.Count > 0)
             {

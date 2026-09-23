@@ -319,39 +319,6 @@ public class FileParser
         return -1;
     }
 
-    public static List<EmployeeProfileDto> SelectProfilesForAnalysis(
-        List<EmployeeProfileDto> profiles,
-        string? selectedFio,
-        string? careerGoal)
-    {
-        var selected = profiles;
-        if (!string.IsNullOrWhiteSpace(selectedFio))
-        {
-            var normalizedFio = NormalizePersonName(selectedFio);
-            selected = profiles
-                .Where(profile => string.Equals(
-                    NormalizePersonName(profile.Fio),
-                    normalizedFio,
-                    StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
-
-        if (!string.IsNullOrWhiteSpace(careerGoal))
-        {
-            foreach (var profile in selected)
-            {
-                profile.CareerGoal = careerGoal.Trim();
-            }
-        }
-
-        return selected;
-    }
-
-    private static string NormalizePersonName(string? value)
-    {
-        return Regex.Replace(value?.Trim() ?? string.Empty, @"\s+", " ");
-    }
-
     private static string NormalizeHeader(string value)
     {
         var normalized = Regex.Replace(value.Trim().ToLowerInvariant(), @"[^\p{L}\p{Nd}]+", " ");
