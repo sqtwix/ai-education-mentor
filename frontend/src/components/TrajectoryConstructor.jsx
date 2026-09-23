@@ -331,7 +331,7 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
             <span className="step-number" aria-hidden="true">1</span>
             <div>
               <h3>Источник данных</h3>
-              <p className="muted">Выберите способ подготовки профиля.</p>
+              <p className="muted">Выберите источник данных для разового формирования ИОТ.</p>
             </div>
           </div>
 
@@ -347,7 +347,7 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
                   if (usersList[selectedUserIndex]) selectUser(usersList[selectedUserIndex]);
                 }}
               >
-                <UserCheck size={16} /> Из базы
+                <UserCheck size={16} /> Встроенный реестр
               </button>
             )}
             <button 
@@ -356,7 +356,7 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
               aria-pressed={activeTab === "custom"}
               onClick={() => setActiveTab("custom")}
             >
-              <Plus size={16} /> Новый профиль
+              <Plus size={16} /> Заполнить вручную
             </button>
             <button 
               type="button"
@@ -371,6 +371,10 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
           {/* ВКЛАДКА 1: Выбор из реестра 323 служащих */}
           {activeTab === "existing" && (
             <div className="form-group">
+              <div className="model-unavailable-note" role="note">
+                <AlertCircle size={17} />
+                <span>Это встроенный снимок реестра из поставки приложения, а не данные из PostgreSQL.</span>
+              </div>
               <label className="form-label" htmlFor="trajectory-registry-user">
                 <UserCheck size={16} /> Сотрудник
               </label>
@@ -390,6 +394,12 @@ export function TrajectoryConstructor({ onTrajectoryCreated, notify }) {
           {/* ВКЛАДКА 1 и 2: Поля профиля */}
           {activeTab !== "files" && (
             <>
+              {activeTab === "custom" && (
+                <div className="model-unavailable-note" role="note">
+                  <AlertCircle size={17} />
+                  <span>Данные используются только для текущего отчета. Отдельная карточка сотрудника не создается, поэтому повторно выбрать этот профиль нельзя.</span>
+                </div>
+              )}
               <div className="profile-form-grid">
                 <div className="form-group">
                   <label className="form-label" htmlFor="trajectory-fio">ФИО сотрудника</label>

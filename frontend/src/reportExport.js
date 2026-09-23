@@ -1,5 +1,6 @@
 import verdanaBoldUrl from "./assets/fonts/Verdana-Bold.ttf?url";
 import verdanaUrl from "./assets/fonts/Verdana.ttf?url";
+import { resolveReportTrajectoryForExport } from "./reportExportData";
 
 const BRAND_BLUE = [27, 85, 155];
 const SOFT_BLUE = [235, 243, 252];
@@ -57,7 +58,7 @@ export async function exportReportToPdf(report) {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   await registerPdfFonts(doc);
 
-  const traj = report.result?.trajectory || report.result?.courses_analysis?.[0] || report.result || {};
+  const traj = resolveReportTrajectoryForExport(report);
   const exportDate = formatExportDate();
   const empName = traj.employee_name || "Не указано";
   const position = traj.position || "Не указано";
@@ -181,7 +182,7 @@ export async function exportReportToExcel(report) {
   workbook.creator = "Корпоративный университет Санкт-Петербурга";
   workbook.created = new Date();
 
-  const traj = report.result?.trajectory || report.result?.courses_analysis?.[0] || report.result || {};
+  const traj = resolveReportTrajectoryForExport(report);
   const empName = traj.employee_name || "Не указано";
   const position = traj.position || "Не указано";
 
@@ -199,7 +200,6 @@ export async function exportReportToExcel(report) {
     { header: "Обоснование рекомендации ИИ", key: "justification", width: 55 },
   ];
 
-  // Header style
   sheet1.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
   sheet1.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1B559B" } };
 
@@ -273,7 +273,7 @@ export async function exportReportToExcel(report) {
 }
 
 export function exportReportToJson(report) {
-  const traj = report.result?.trajectory || report.result || {};
+  const traj = resolveReportTrajectoryForExport(report);
   const empName = traj.employee_name || "Не указано";
   const jsonStr = JSON.stringify(traj, null, 2);
   const blob = new Blob([jsonStr], { type: "application/json;charset=utf-8;" });

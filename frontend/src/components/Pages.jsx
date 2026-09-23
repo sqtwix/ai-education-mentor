@@ -717,7 +717,7 @@ export function CourseReportDetailPage({
             <button
               type="button"
               className="icon-action-button save-action"
-              disabled={isDegraded || exportNeedsProfileSelection}
+              disabled={exportNeedsProfileSelection}
               onClick={() => {
                 setIsProfileMenuOpen(false);
                 setIsSaveMenuOpen((isOpen) => !isOpen);
@@ -725,9 +725,7 @@ export function CourseReportDetailPage({
               aria-expanded={isSaveMenuOpen}
               aria-haspopup="menu"
               aria-label="Сохранить"
-              title={isDegraded
-                ? "Экспорт недоступен до экспертной проверки"
-                : exportNeedsProfileSelection
+              title={exportNeedsProfileSelection
                   ? "Сначала выберите профиль"
                   : "Сохранить"}
             >
@@ -756,7 +754,7 @@ export function CourseReportDetailPage({
           <AlertTriangle size={18} />
           <div>
             <strong>Результат сформирован в резервном режиме</strong>
-            <p>Модель анализа не завершила работу. Требуется экспертная проверка; экспорт временно недоступен.</p>
+            <p>Часть ответа модели была заменена проверяемым серверным результатом. Отчет доступен для скачивания без ограничений.</p>
           </div>
         </div>
       )}
@@ -790,7 +788,7 @@ export function CourseReportDetailPage({
         <div style={{ marginTop: "1rem" }}>
           <TrajectoryRoadmap
             trajectory={trajectoryForRoadmap}
-            exportDisabled={isDegraded}
+            exportDisabled={false}
             onExportPdf={() => handleExportReport(reportForExport, "pdf")}
             onExportXlsx={() => handleExportReport(reportForExport, "xlsx")}
             onExportJson={() => handleExportReport(reportForExport, "json")}

@@ -675,12 +675,6 @@ function App() {
   const handleExportReport = async (report, format) => {
     setIsSaveMenuOpen(false);
     try {
-      const isDegraded = report?.status === "CompletedWithLimitations"
-        || report?.result?.quality_status === "degraded"
-        || report?.result?.trajectory?.quality_status === "degraded";
-      if (isDegraded) {
-        throw new Error("Резервный результат нельзя экспортировать до экспертной проверки.");
-      }
       if (format === "pdf") {
         await exportReportToPdf(report);
         notify({ type: "success", title: "PDF сохранен" });
