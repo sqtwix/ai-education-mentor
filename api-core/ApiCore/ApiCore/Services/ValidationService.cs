@@ -98,7 +98,17 @@ public class ValidationService
                 result.AddError($"Профиль {index + 1}: отсутствуют обязательные поля — {string.Join(", ", missing)}.");
             }
 
+            if (profile.Fio?.Length > 200) result.AddError($"Профиль {index + 1}: ФИО не должно превышать 200 символов.");
+            if (profile.Position?.Length > 300) result.AddError($"Профиль {index + 1}: должность не должна превышать 300 символов.");
+            if (profile.Department?.Length > 300) result.AddError($"Профиль {index + 1}: ИОГВ не должен превышать 300 символов.");
+            if (profile.CareerGoal?.Length > 2000) result.AddError($"Профиль {index + 1}: цель обучения не должна превышать 2000 символов.");
+            if (profile.ExperienceYears is < 0 or > 80) result.AddError($"Профиль {index + 1}: стаж должен быть от 0 до 80 лет.");
+
             var learningHistory = profile.LearningHistory ?? new List<CourseHistoryItemDto>();
+            if (learningHistory.Count > 200)
+            {
+                result.AddError($"Профиль {index + 1}: история обучения не должна содержать более 200 записей.");
+            }
             for (var historyIndex = 0; historyIndex < learningHistory.Count; historyIndex++)
             {
                 var item = learningHistory[historyIndex];
@@ -109,6 +119,18 @@ public class ValidationService
                 if (string.IsNullOrWhiteSpace(item.Status))
                 {
                     result.AddError($"Профиль {index + 1}, запись истории {historyIndex + 1}: отсутствует статус прохождения.");
+                }
+                if (item.CourseName?.Length > 500)
+                {
+                    result.AddError($"Профиль {index + 1}, запись истории {historyIndex + 1}: название программы не должно превышать 500 символов.");
+                }
+                if (item.CourseType?.Length > 100)
+                {
+                    result.AddError($"Профиль {index + 1}, запись истории {historyIndex + 1}: тип программы не должен превышать 100 символов.");
+                }
+                if (item.Status?.Length > 100)
+                {
+                    result.AddError($"Профиль {index + 1}, запись истории {historyIndex + 1}: статус не должен превышать 100 символов.");
                 }
             }
         }

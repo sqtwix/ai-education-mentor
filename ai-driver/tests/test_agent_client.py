@@ -24,8 +24,45 @@ class AgentClientJsonTests(unittest.TestCase):
 
         self.assertEqual(result, '{"status": "ok"}')
         self.assertEqual(openai_mock.call_args.kwargs["max_retries"], 0)
+        self.assertEqual(api.chat.completions.create.call_args.kwargs["timeout"], 120)
         sent_messages = api.chat.completions.create.call_args.kwargs["messages"]
         self.assertTrue(sent_messages[0]["content"].endswith("/no_think"))
+
+    @patch.dict(
+        "os.environ",
+        {
+            "AI_LOCAL_REQUEST_TIMEOUT_SECONDS": "240",
+            "AI_REQUEST_TIMEOUT_SECONDS": "45",
+        },
+        clear=False,
+    )
+    @patch("backend.agent_client.OpenAI")
+    def test_request_timeout_is_configurable_per_runtime(self, openai_mock):
+        api = MagicMock()
+        api.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{"status":"ok"}'))]
+        )
+        openai_mock.return_value = api
+
+        local_client = AgentClient(
+            api_key="not-needed",
+            base_url="http://local-llm:8080/v1",
+            agent_model="local-model",
+            specialization="competency-analyst",
+            local_runtime=True,
+        )
+        local_client.execute("Return JSON.", "{}")
+        self.assertEqual(api.chat.completions.create.call_args.kwargs["timeout"], 240)
+
+        cloud_client = AgentClient(
+            api_key="real-key",
+            base_url="https://example.invalid/v1",
+            agent_model="cloud-model",
+            specialization="competency-analyst",
+            local_runtime=False,
+        )
+        cloud_client.execute("Return JSON.", "{}")
+        self.assertEqual(api.chat.completions.create.call_args.kwargs["timeout"], 45)
 
     def test_valid_json_object_is_preserved(self):
         self.assertEqual(

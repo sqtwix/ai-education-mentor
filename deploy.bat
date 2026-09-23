@@ -112,7 +112,7 @@ if errorlevel 1 exit /b 1
 rem Previous releases created the DataProtection volume while API Core ran as
 rem root. Migrate only this dedicated volume before the non-root API starts.
 echo --> Preparing persistent DataProtection key permissions...
-!COMPOSE! !COMPOSE_PROFILE! run --rm --no-deps --user root --entrypoint /bin/sh api-core -c "mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys"
+!COMPOSE! !COMPOSE_PROFILE! run --rm --no-deps --user root --entrypoint sh api-core -c "mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys"
 if errorlevel 1 exit /b 1
 
 echo --> Starting Docker containers...

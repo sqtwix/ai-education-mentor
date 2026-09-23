@@ -144,6 +144,7 @@ git pull --ff-only origin main
 ## Ограничения и безопасность
 
 - До 25 МБ на файл, 50 МБ на запрос и 20 файлов; ZIP/XLSX дополнительно проверяются на число entries, распакованный объём и степень сжатия.
+- Один профиль содержит не более 200 записей истории; стаж ограничен диапазоном 0–80 лет, а текстовые поля имеют согласованные пределы API Core и AI Driver.
 - ФИО псевдонимизируется перед внешним LLM; email, телефоны, СНИЛС и паспортные данные маскируются.
 - API Core и AI Driver работают не от root, с read-only root filesystem, `tmpfs` и `no-new-privileges`.
 - Логи Docker ротируются: 5 файлов по 10 МБ.
@@ -155,9 +156,11 @@ git pull --ff-only origin main
 
 - [Руководство пользователя](USER_GUIDE.md)
 - [Руководство администратора](ADMIN_GUIDE.md)
+- [Запуск с локальной моделью Qwen](LOCAL_MODEL_RUNBOOK_FOR_TEAM.md)
 - [Руководство разработчика](DEVELOPER_GUIDE.md)
 - [Спецификация ИИ-агента](agent.md)
 - [Контрольный список релиза](RELEASE_GATE.md)
+- [Передача заказчику и сценарий презентации](CUSTOMER_HANDOFF_AND_PRESENTATION_GUIDE.md)
 - [Отчёт проверки Qwen-конвейера](QWEN3_PIPELINE_VALIDATION_REPORT.md)
 - [Аудит production hardening](PRODUCTION_HARDENING_AUDIT.md)
 - [Презентация PPTX](PRESENTATION.pptx) и [PDF](PRESENTATION.pdf)
@@ -179,8 +182,8 @@ ai-education-mentor/
 
 ## Проверенное состояние
 
-Автоматизированы frontend unit/lint/build, AI unit/OpenAPI tests, .NET contract tests, ACL smoke, multi-user runtime, пакет из 15 профилей с перезапуском модели, чтение API под нагрузкой и backup→restore. Точные команды и границы каждой проверки приведены в [руководстве разработчика](DEVELOPER_GUIDE.md) и [release gate](RELEASE_GATE.md).
+Автоматизированы frontend unit/lint/build, AI unit/OpenAPI tests, .NET contract tests, ACL smoke, multi-user runtime, пакет из 15 профилей с перезапуском модели, чтение API под нагрузкой и backup→restore. Точные команды, даты и границы каждой проверки приведены в [руководстве разработчика](DEVELOPER_GUIDE.md), [release gate](RELEASE_GATE.md) и [руководстве передачи заказчику](CUSTOMER_HANDOFF_AND_PRESENTATION_GUIDE.md).
 
-Это подтверждает воспроизводимость текущей реализации, но не заменяет экспертно размеченный набор данных для измерения семантической точности рекомендаций.
+Исторические runtime-отчёты подтверждают соответствующий зафиксированный baseline, но после каждого изменения требуют повторного контейнерного прогона. Они не заменяют экспертно размеченный набор данных для измерения семантической точности рекомендаций. Корпоративный запуск также требует утвержденной связи учетных записей с профилями сотрудников, назначений методистов и политики регистрации/SSO.
 
 Разработано для финала хакатона Корпоративного университета Санкт-Петербурга. © 2026.

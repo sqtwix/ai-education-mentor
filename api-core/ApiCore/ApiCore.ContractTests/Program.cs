@@ -114,6 +114,39 @@ try
         .ToList();
     Assert(!validator.ValidateEmployeeProfiles(oversizedBatch).IsValid, "A batch larger than 15 profiles must be rejected");
 
+    var invalidProfile = new EmployeeProfileDto
+    {
+        Fio = new string('Я', 201),
+        Position = expected.Position,
+        Department = expected.Department,
+        ExperienceYears = -1,
+        CareerGoal = new string('Ц', 2001),
+        LearningHistory = Enumerable.Range(1, 201)
+            .Select(index => new CourseHistoryItemDto
+            {
+                CourseName = $"Курс {index}",
+                CourseType = "ЭК",
+                Status = "Пройден"
+            })
+            .ToList()
+    };
+    var invalidProfileErrors = validator.ValidateEmployeeProfiles([invalidProfile]);
+    Assert(!invalidProfileErrors.IsValid, "Upload validation must reject oversized profile fields, invalid experience and excessive history");
+    Assert(ValidateModel(invalidProfile).Count > 0, "JSON DTO annotations must reject invalid profile boundaries");
+
+    var invalidRequestId = new TrajectoryGenerateRequest
+    {
+        RequestId = "contains spaces",
+        Employee = new EmployeeProfileDto
+        {
+            Fio = "Тестовый профиль",
+            Position = expected.Position,
+            Department = expected.Department,
+            CareerGoal = expected.CareerGoal
+        }
+    };
+    Assert(ValidateModel(invalidRequestId).Count > 0, "API Core must reject request IDs that AI Driver rejects");
+
     const string batchResultJson = """
         {
           "batch_id": "batch-contract",
@@ -259,6 +292,14 @@ try
 
     var oversizedRenameErrors = ValidateModel(new RenameReportRequest { Name = new string('Я', 256) });
     Assert(oversizedRenameErrors.Count > 0, "Report rename must match the database length limit");
+
+    using var validSettings = System.Text.Json.JsonDocument.Parse("{\"theme\":\"dark\"}");
+    Assert(UserController.ValidateSettingsPayload(validSettings.RootElement) == null, "A small settings object must be accepted");
+    using var invalidSettingsShape = System.Text.Json.JsonDocument.Parse("[]");
+    Assert(UserController.ValidateSettingsPayload(invalidSettingsShape.RootElement) != null, "Settings arrays must be rejected");
+    using var oversizedSettings = System.Text.Json.JsonDocument.Parse(
+        System.Text.Json.JsonSerializer.Serialize(new { payload = new string('x', 65_537) }));
+    Assert(UserController.ValidateSettingsPayload(oversizedSettings.RootElement) != null, "Settings larger than 64 KiB must be rejected");
 
     Console.WriteLine("Contract tests passed: JSON, CSV, XLSX, XLS and ZIP preserve complete profiles; multiple files work; invalid inputs are rejected and ZIP extraction is cleaned; auth DTO validation matches UI and database constraints.");
     return 0;

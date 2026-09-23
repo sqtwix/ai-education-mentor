@@ -8,6 +8,7 @@ using System;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using System.Globalization;
 
 namespace ApiCore.Services;
 
@@ -106,7 +107,9 @@ public class AuthService
             Subject = new ClaimsIdentity(claims),
             Issuer = jwtSettings["Issuer"],
             Audience = jwtSettings["Audience"],
-            Expires = DateTime.UtcNow.AddMinutes(double.Parse(jwtSettings["ExpiryMinutes"] ?? "60")),
+            Expires = DateTime.UtcNow.AddMinutes(int.Parse(
+                jwtSettings["ExpiryMinutes"] ?? "60",
+                CultureInfo.InvariantCulture)),
             SigningCredentials = signingCredentials
         };
 

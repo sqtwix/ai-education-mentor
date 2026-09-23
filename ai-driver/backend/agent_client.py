@@ -1,6 +1,7 @@
 from openai import OpenAI
 import json
 import logging
+import os
 
 # ========================= Agent Client =========================
 
@@ -26,6 +27,16 @@ import logging
 # Настройка логгера для отслеживания работы агентов
 logger = logging.getLogger(__name__)
 
+
+def _bounded_timeout(env_name: str, default: int) -> int:
+    """Read a request timeout without allowing an invalid value to break startup."""
+    raw_value = os.getenv(env_name, str(default)).strip()
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return max(5, min(value, 600))
+
 class AgentClient:
     def __init__(
         self,
@@ -50,6 +61,15 @@ class AgentClient:
                 "qwen" in agent_model.lower() or "qwen" in base_url.lower()
             )
             self.disable_thinking = inferred_qwen if disable_thinking is None else disable_thinking
+            timeout_variable = (
+                "AI_LOCAL_REQUEST_TIMEOUT_SECONDS"
+                if self.is_local_runtime
+                else "AI_REQUEST_TIMEOUT_SECONDS"
+            )
+            self.request_timeout_seconds = _bounded_timeout(
+                timeout_variable,
+                120 if self.is_local_runtime else 60,
+            )
             # OpenAI клиент работает для всех совместимых API (DeepSeek, GigaChat, vLLM/llama.cpp)
             self.client = OpenAI(
                 api_key=self.api_key,
@@ -93,7 +113,7 @@ class AgentClient:
                 response_format={"type": "json_object"},
                 temperature=0.3,
                 max_tokens=max_tokens_by_specialization.get(self.specialization, 900),
-                timeout=60
+                timeout=self.request_timeout_seconds,
             )
 
             # Извлекаем содержимое ответа

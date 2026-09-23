@@ -206,6 +206,8 @@ python -m unittest discover -s tests -v
 
 Тесты покрывают клиент модели, managed/external availability и inference probe, отсутствие утечки API key, grounding/валидацию менеджера, псевдонимизацию external endpoint и OpenAPI-контракт.
 
+Контракты API Core и AI Driver должны сохранять одинаковые границы профиля: ФИО 200, должность/ИОГВ 300, цель 2000 символов, стаж 0–80 лет, не более 200 записей истории. Изменение одного слоя без второго считается несовместимым.
+
 ### API Core
 
 ```bash

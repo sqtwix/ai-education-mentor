@@ -1,6 +1,24 @@
 # Release gate для защиты
 
-Проект считается готовым к production-демо только после выполнения всех пунктов. Основной прогон выполнен 23 августа 2026 года; режим запуска без AI повторно проверен 30–31 августа 2026 года, а универсальный managed/external local provider — 31 августа 2026 года. Незакрытые пункты не маскируются кодовыми значениями по умолчанию.
+Проект считается готовым к production-демо только после выполнения всех пунктов на том commit, который передается заказчику. Основной исторический прогон выполнен 23 августа 2026 года; режим запуска без AI повторно проверен 30–31 августа 2026 года, а универсальный managed/external local provider — 31 августа 2026 года. Галочки ниже фиксируют доказательства того baseline и не заменяют повторный прогон после изменения кода.
+
+## Статус текущего worktree — 20 сентября 2026 года
+
+**Технический gate локального production-demo закрыт.** На текущем worktree повторно прошли component-, container-, browser- и LLM-проверки. Пункты, требующие решения владельца данных, внешних API-ключей, TLS/SSO и экспертной разметки, остаются отдельными организационными условиями промышленного запуска и перечислены ниже.
+
+- [x] `dotnet build ApiCore.sln -warnaserror` и contract tests: 0 warnings/0 errors.
+- [x] AI Driver: 27/27 tests и `compileall`.
+- [x] Frontend: 6/6 tests, oxlint, production build.
+- [x] npm production, NuGet и Python dependency audit: известных уязвимостей нет.
+- [x] `init_env.sh`: первый запуск, случайные secrets, права `600`, порт и идемпотентность.
+- [x] Browser production: login, каталог, аналитика, настройки, очередь, итоговый отчёт и экспорты; viewport 390×844 без горизонтального overflow.
+- [x] `docker compose config/build/up`, миграции `ProductionBaseline` и `AddProcessingCheckpoint`, readiness пяти сервисов на текущем worktree.
+- [x] `no_ai_runtime_smoke.sh`, `platform_runtime_smoke.sh`, `qa_acl_smoke.sh`, `backup_restore_smoke.sh` на текущем worktree.
+- [x] Реальный Qwen E2E, очередь трёх пользователей, maximum batch 15/15 с retry/checkpoint и browser exports на текущем worktree.
+
+Свежие результаты: Qwen single E2E — passed; multi-user — 3 пользователя за 278 с; maximum batch — 15/15 за 2 955 с после принудительного `SIGKILL`, `attempt_count=3`, checkpoint очищен; read load — 300 запросов при concurrency 12, 89,46 req/s, 0 ошибок; ACL — 12/12; backup→restore — совпадение `0|0|0`. Тестовые данные удалены, стенд оставлен healthy на `http://localhost:8088/`.
+
+Полный handoff, сценарий демонстрации и остаточные продуктовые решения: `CUSTOMER_HANDOFF_AND_PRESENTATION_GUIDE.md`.
 
 ## Автоматические проверки
 

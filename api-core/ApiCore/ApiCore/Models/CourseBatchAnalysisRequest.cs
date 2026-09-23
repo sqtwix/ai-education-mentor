@@ -1,9 +1,12 @@
 using System.Text.Json.Serialization;
+using System.ComponentModel.DataAnnotations;
 
 namespace ApiCore.Models;
 
 public class TrajectoryGenerateRequest
 {
+    [StringLength(128)]
+    [RegularExpression(@"^[A-Za-z0-9_-]+$")]
     [JsonPropertyName("request_id")]
     public string RequestId { get; set; } = Guid.NewGuid().ToString();
 
@@ -16,33 +19,48 @@ public class TrajectoryGenerateRequest
 
 public class EmployeeProfileDto
 {
+    [Required]
+    [StringLength(200, MinimumLength = 1)]
     [JsonPropertyName("fio")]
     public string Fio { get; set; } = string.Empty;
 
+    [Required]
+    [StringLength(300, MinimumLength = 1)]
     [JsonPropertyName("position")]
     public string Position { get; set; } = string.Empty;
 
+    [Required]
+    [StringLength(300, MinimumLength = 1)]
     [JsonPropertyName("department")]
     public string Department { get; set; } = string.Empty;
 
+    [Range(0, 80)]
     [JsonPropertyName("experience_years")]
     public int ExperienceYears { get; set; }
 
+    [Required]
+    [StringLength(2000, MinimumLength = 1)]
     [JsonPropertyName("career_goal")]
     public string CareerGoal { get; set; } = string.Empty;
 
+    [MaxLength(200)]
     [JsonPropertyName("learning_history")]
     public List<CourseHistoryItemDto> LearningHistory { get; set; } = new();
 }
 
 public class CourseHistoryItemDto
 {
+    [Required]
+    [StringLength(500, MinimumLength = 1)]
     [JsonPropertyName("course_name")]
     public string CourseName { get; set; } = string.Empty;
 
+    [StringLength(100)]
     [JsonPropertyName("course_type")]
     public string CourseType { get; set; } = string.Empty;
 
+    [Required]
+    [StringLength(100, MinimumLength = 1)]
     [JsonPropertyName("status")]
     public string Status { get; set; } = string.Empty;
 }

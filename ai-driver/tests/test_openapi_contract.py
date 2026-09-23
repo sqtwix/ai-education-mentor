@@ -1,6 +1,8 @@
 import unittest
+from pydantic import ValidationError
 
 from main import app
+from schemas.trajectory_request import TrajectoryRequest
 
 
 class OpenApiContractTests(unittest.TestCase):
@@ -28,6 +30,35 @@ class OpenApiContractTests(unittest.TestCase):
         document = app.openapi()
         self.assertIn("/agents/progress/{request_id}", document["paths"])
         self.assertIn("get", document["paths"]["/agents/progress/{request_id}"])
+
+    def test_trajectory_request_rejects_unbounded_or_invalid_profile_data(self):
+        base_employee = {
+            "fio": "Тестовый профиль",
+            "position": "Главный специалист",
+            "department": "Тестовое ведомство",
+            "career_goal": "Развитие цифровых компетенций",
+            "learning_history": [],
+        }
+
+        invalid_payloads = [
+            {"request_id": "contains spaces", "employee": base_employee},
+            {"employee": {**base_employee, "experience_years": -1}},
+            {"employee": {**base_employee, "career_goal": "x" * 2001}},
+            {
+                "employee": {
+                    **base_employee,
+                    "learning_history": [
+                        {"course_name": f"Курс {index}", "status": "Пройден"}
+                        for index in range(201)
+                    ],
+                }
+            },
+        ]
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=list(payload)):
+                with self.assertRaises(ValidationError):
+                    TrajectoryRequest.model_validate(payload)
 
 
 if __name__ == "__main__":

@@ -118,6 +118,15 @@ if (Encoding.UTF8.GetByteCount(secretKey) < 32)
 {
     throw new InvalidOperationException("JWT Secret must contain at least 32 bytes.");
 }
+if (string.IsNullOrWhiteSpace(jwtSettings["Issuer"]) || string.IsNullOrWhiteSpace(jwtSettings["Audience"]))
+{
+    throw new InvalidOperationException("JWT Issuer and Audience must be configured.");
+}
+if (!int.TryParse(jwtSettings["ExpiryMinutes"], out var jwtExpiryMinutes)
+    || jwtExpiryMinutes is < 5 or > 10080)
+{
+    throw new InvalidOperationException("JWT ExpiryMinutes must be an integer from 5 to 10080.");
+}
 
 builder.Services.AddAuthentication(options =>
 {

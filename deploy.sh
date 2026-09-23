@@ -216,8 +216,10 @@ compose_cmd build
 
 # Previous releases created the DataProtection volume while API Core ran as
 # root. Migrate only this dedicated volume before starting the non-root image.
+# Use the command name rather than /bin/sh: Git Bash/MSYS rewrites Unix-looking
+# container paths to C:/Program Files/... before passing them to Docker.
 echo "--> Preparing persistent DataProtection key permissions..."
-compose_cmd run --rm --no-deps --user root --entrypoint /bin/sh api-core \
+compose_cmd run --rm --no-deps --user root --entrypoint sh api-core \
     -c 'mkdir -p /var/lib/api-core/dataprotection-keys && chown -R app:app /var/lib/api-core/dataprotection-keys'
 
 echo "--> Starting Docker containers..."

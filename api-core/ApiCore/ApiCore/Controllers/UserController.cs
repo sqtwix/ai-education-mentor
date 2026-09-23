@@ -5,6 +5,7 @@ using ApiCore.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text;
 
 namespace ApiCore.Controllers;
 
@@ -78,15 +79,34 @@ public class UserController : ControllerBase
             return Unauthorized(new { error = "Пользователь не авторизован." });
         }
 
+        var settingsValidationError = ValidateSettingsPayload(settings);
+        if (settingsValidationError != null)
+        {
+            return BadRequest(new { error = settingsValidationError });
+        }
+
+        var rawSettings = settings.GetRawText();
         var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user == null)
         {
             return NotFound(new { error = "Пользователь не найден." });
         }
 
-        user.SettingsJson = settings.GetRawText();
+        user.SettingsJson = rawSettings;
         await _context.SaveChangesAsync();
 
         return Ok(settings);
+    }
+
+    public static string? ValidateSettingsPayload(JsonElement settings)
+    {
+        if (settings.ValueKind != JsonValueKind.Object)
+        {
+            return "Настройки должны быть JSON-объектом.";
+        }
+
+        return Encoding.UTF8.GetByteCount(settings.GetRawText()) > 65_536
+            ? "Размер настроек не должен превышать 64 КБ."
+            : null;
     }
 }
